@@ -6,7 +6,7 @@ on:
       command:
         description: "Command to run"
         required: false
-        default: "node scraper_ct.js"
+        default: "node scraper_ct.js --storeId 0418 --storeName \"Rosemere, QC\""
 
 jobs:
   run:
