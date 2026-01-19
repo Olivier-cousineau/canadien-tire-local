@@ -24,5 +24,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
       - name: Run command
         run: ${{ inputs.command }}
+
+      - name: Upload scraper outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: canadiantire-0418-rosemere-qc
+          path: |
+            outputs/canadiantire/0418-rosemere-qc/data.json
+            outputs/canadiantire/0418-rosemere-qc/data.csv
+          if-no-files-found: warn
