@@ -6,14 +6,13 @@
  * - Multi-magasins via --store <ID> --city "<Nom>"
  * - Titres/prix robustes (aria-label/title/alt, data-*), scroll "lazy"
  * - Enrichissement depuis la liste uniquement (pas de PDP)
- * - Sorties par magasin: outputs/canadiantire/<store>-<city-slug>/{data.json,data.csv}
+ * - Sorties par magasin: outputs/canadiantire/<store>-<city-slug>/data.json
  */
 import fs from "fs";
 import path from "path";
 import { chromium } from "playwright";
 import fsExtra from "fs-extra";
 import slugify from "slugify";
-import { createObjectCsvWriter } from "csv-writer";
 import minimist from "minimist";
 import {
   buildCtKeysFromText,
@@ -102,7 +101,7 @@ function hasReachedTimeLimit() {
 }
 
 // TASK FOR CODEX:
-// Ensure this scraper always writes JSON/CSV to the OUT_BASE passed via CLI,
+// Ensure this scraper always writes JSON to the OUT_BASE passed via CLI,
 // and that the paths never depend on a previous store.
 //
 // 1) Parse the CLI arguments like this:
@@ -121,12 +120,10 @@ function hasReachedTimeLimit() {
 //      OUT_BASE = path.join("outputs", "canadiantire", `${storeId}-${citySlug}`);
 //    }
 //    const jsonPath = path.join(OUT_BASE, "data.json");
-//    const csvPath = path.join(OUT_BASE, "data.csv");
 //    console.log(`OUT_BASE=${OUT_BASE}`);
 //    console.log(`💾  JSON → ${jsonPath}`);
-//    console.log(`📄  CSV  → ${csvPath}`);
 //
-// 3) When writing files, always use jsonPath and csvPath above.
+// 3) When writing files, always use jsonPath above.
 //    Do NOT hard-code "418-rosemere-qc" or any specific store folder.
 //
 // 4) If there is a git commit step inside this file, make sure the commit message uses:
@@ -632,21 +629,7 @@ function resolveOutputPaths(storeId, storeName = "") {
     OUT_BASE = path.join("outputs", "canadiantire", `${storeIdStr}-${citySlug}`);
   }
   const jsonPath = path.join(OUT_BASE, "data.json");
-  const csvPath = path.join(OUT_BASE, "data.csv");
-  return { OUT_BASE, jsonPath, csvPath };
-}
-
-function buildCategoryUrlForStore(categoryUrl, storeId) {
-  if (!categoryUrl) return DEFAULT_BASE;
-  try {
-    const url = new URL(categoryUrl, BASE);
-    if (storeId) {
-      url.searchParams.set("store", storeId);
-    }
-    return url.toString();
-  } catch {
-    return categoryUrl;
-  }
+  return { OUT_BASE, jsonPath };
 }
 
 function normalizeAvailabilityInfo(rawAvailability, stockQtyInput = null) {
@@ -881,68 +864,6 @@ async function maybeCloseStoreModal(page) {
       }
     } catch {}
   }
-}
-
-let cachedCategoryUrls = null;
-let categoryFetchPromise = null;
-
-async function fetchCategoryUrls() {
-  const browser = await chromium.launch({ headless: HEADLESS, args: ["--disable-dev-shm-usage"] });
-  const context = await browser.newContext({ locale: "fr-CA" });
-  context.setDefaultTimeout(0);
-  const page = await context.newPage();
-  page.setDefaultNavigationTimeout(0);
-
-  await page.route("**/*medallia*", (route) => route.abort());
-  await page.route("**/resources.digital-cloud.medallia.ca/**", (route) => route.abort());
-
-  try {
-    await page.goto(DEFAULT_BASE, { timeout: 120000, waitUntil: "domcontentloaded" });
-    await maybeCloseStoreModal(page);
-
-    const links = await page
-      .locator("a[href*='/fr/promotions/liquidation/']")
-      .evaluateAll((anchors, base) => {
-        const urls = anchors
-          .map((anchor) => anchor.getAttribute("href"))
-          .filter(Boolean)
-          .map((href) => {
-            try {
-              const u = new URL(href, base);
-              u.hash = "";
-              return u.toString();
-            } catch {
-              return null;
-            }
-          })
-          .filter(Boolean)
-          .filter((href) => href.includes("/fr/promotions/liquidation/"));
-
-        return Array.from(new Set(urls));
-      }, BASE);
-
-    console.log(`[SCRAPER] ${links.length} catégorie(s) détectée(s) sur la page de liquidation.`);
-    return links;
-  } catch (error) {
-    console.error("[SCRAPER] Impossible de récupérer les catégories de liquidation :", error);
-    return [];
-  } finally {
-    await browser.close();
-  }
-}
-
-async function getCategoryUrls() {
-  if (cachedCategoryUrls) return cachedCategoryUrls;
-
-  if (!categoryFetchPromise) {
-    categoryFetchPromise = fetchCategoryUrls().catch((error) => {
-      console.error("[SCRAPER] Échec lors de la récupération des catégories :", error);
-      return [];
-    });
-  }
-
-  cachedCategoryUrls = await categoryFetchPromise;
-  return cachedCategoryUrls;
 }
 
 const STORE_SELECTORS = {
@@ -1181,7 +1102,7 @@ async function autoScrollLoadAllProducts(page, {
   await page.evaluate(() => window.scrollTo(0, 0));
 }
 
-async function scrapeCategoryAllPages(page, categoryUrlWithStore, storeId, {
+async function scrapeStoreAllPages(page, storeUrl, storeId, {
   extractPage,
   autoScrollConfig,
   storeName,
@@ -1191,9 +1112,8 @@ async function scrapeCategoryAllPages(page, categoryUrlWithStore, storeId, {
   const maxPages = Math.max(1, Number(args.maxPages) || 50);
   let previousSignature = null;
   let storeInitialized = false;
-  const seen = new Set();
-  let zeroStreak = 0;
-  const ZERO_STREAK_LIMIT = 3;
+  let emptyPageStreak = 0;
+  const EMPTY_STREAK_LIMIT = 2;
 
   for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
     if (hasReachedTimeLimit()) {
@@ -1201,7 +1121,7 @@ async function scrapeCategoryAllPages(page, categoryUrlWithStore, storeId, {
       break;
     }
 
-    const pageUrl = withPageParam(categoryUrlWithStore, pageNum);
+    const pageUrl = withPageParam(storeUrl, pageNum);
     console.log("➡️  Go to:", pageUrl);
 
     let retries = 3;
@@ -1249,53 +1169,29 @@ async function scrapeCategoryAllPages(page, categoryUrlWithStore, storeId, {
 
     items.push(...records);
 
-    let newlyAdded = 0;
-    for (const record of records) {
-      const sku = record.sku ?? record.sku_formatted ?? null;
-      const url = normalizeProductUrlForDedup(record.url || record.link);
-      const key = sku ? `sku:${String(sku).toLowerCase()}` : url ? `url:${url}` : null;
-      if (!key) continue;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      newlyAdded += 1;
-    }
-
-    if (newlyAdded === 0) {
-      zeroStreak += 1;
-    } else {
-      zeroStreak = 0;
-    }
-
-    console.log(
-      `[PAGINATION] Page ${pageNum} stats: extracted=${records.length}, newlyAdded=${newlyAdded}, zeroStreak=${zeroStreak}, totalUnique=${seen.size}`
-    );
-
-    if (zeroStreak >= ZERO_STREAK_LIMIT) {
-      console.log(
-        `[PAGINATION] Stop page ${pageNum}: zeroStreak >= ${ZERO_STREAK_LIMIT} (aucun nouvel item).`
-      );
-      break;
-    }
-
     let stopReason = null;
     if (!totalProducts || totalProducts <= 0) {
       stopReason = "aucun produit sur la page";
     } else if (records.length === 0) {
-      stopReason = "0 item extrait";
+      emptyPageStreak += 1;
+      console.log(
+        `[PAGINATION] Page ${pageNum}: 0 item extrait (empty streak ${emptyPageStreak}/${EMPTY_STREAK_LIMIT}).`
+      );
+      if (emptyPageStreak >= EMPTY_STREAK_LIMIT) {
+        stopReason = "0 item extrait sur 2 pages consécutives";
+      }
     } else {
-      const signature = Array.from(productKeys || [])
-        .map((k) => String(k).toLowerCase())
-        .sort()
-        .join("|");
-      if (previousSignature && signature && signature === previousSignature) {
-        stopReason = "contenu identique à la page précédente (signature produits)";
-      }
-      previousSignature = signature || previousSignature;
-
-      if (!stopReason && totalProducts < 50) {
-        stopReason = "< 50 produits détectés (dernière page probable)";
-      }
+      emptyPageStreak = 0;
     }
+
+    const signature = Array.from(productKeys || [])
+      .map((k) => String(k).toLowerCase())
+      .sort()
+      .join("|");
+    if (previousSignature && signature && signature === previousSignature) {
+      stopReason = "contenu identique à la page précédente (signature produits)";
+    }
+    previousSignature = signature || previousSignature;
 
     if (stopReason) {
       console.log(`[PAGINATION] Stop page ${pageNum}: ${stopReason}`);
@@ -1324,16 +1220,14 @@ async function scrapeStore(store) {
   }
   console.log(`[SCRAPER] Magasin ${storeId ?? "?"} – ${storeName || city || "Nom inconnu"} : début`);
 
-    const { OUT_BASE, jsonPath: OUT_JSON, csvPath: OUT_CSV } = resolveOutputPaths(
+  const { OUT_BASE, jsonPath: OUT_JSON } = resolveOutputPaths(
       storeId ?? "",
       storeName || city || ""
     );
-    const storeSlug = path.basename(OUT_BASE);
     const debugDir = path.join(OUT_BASE, "debug");
 
   console.log(`OUT_BASE=${OUT_BASE}`);
   console.log(`💾  JSON → ${OUT_JSON}`);
-  console.log(`📄  CSV  → ${OUT_CSV}`);
 
   const browser = await chromium.launch({ headless: HEADLESS, args: ["--disable-dev-shm-usage"] });
   const context = await browser.newContext({ locale: "fr-CA" });
@@ -1348,11 +1242,8 @@ async function scrapeStore(store) {
     await page.route("**/resources.digital-cloud.medallia.ca/**", (route) => route.abort());
     await fsExtra.ensureDir(OUT_BASE);
 
-    const categoryUrls = await getCategoryUrls();
-    const urlsToProcess = categoryUrls.length ? categoryUrls : [DEFAULT_BASE];
-    console.log(
-      `[SCRAPER] ${urlsToProcess.length} catégorie(s) à parcourir pour le magasin ${storeId ?? "?"}.`
-    );
+    const baseUrl = DEFAULT_BASE;
+    const storeUrl = `${baseUrl}?store=${storeId}`;
     console.log(`⚙️  Options → liquidation_price=${INCLUDE_LIQUIDATION_PRICE ? "on":"off"}, regular_price=${INCLUDE_REGULAR_PRICE ? "on":"off"}`);
 
     const allDeals = [];
@@ -1433,44 +1324,34 @@ async function scrapeStore(store) {
       return { records, totalProducts: cards.length, productKeys: productKeysSet, accepted: records.length };
     };
 
-    for (const categoryUrl of urlsToProcess) {
-      if (hasReachedTimeLimit()) {
-        console.log(
-          `[SCRAPER] Limite atteinte avant le chargement de la catégorie ${categoryUrl} pour ${storeId ?? "?"}.`
-        );
-        break;
-      }
+    const autoScrollConfig = {
+      productSelector: SELECTORS.card,
+      maxRounds: Number(args.autoScrollMaxRounds) || AUTO_SCROLL_DEFAULTS.maxRounds,
+      stableRoundsToStop: Number(args.autoScrollStableRounds) || AUTO_SCROLL_DEFAULTS.stableRoundsToStop,
+      perRoundWaitMs: Number(args.autoScrollWaitMs) || AUTO_SCROLL_DEFAULTS.perRoundWaitMs,
+      maxTotalMs: Number(args.autoScrollMaxTotalMs) || AUTO_SCROLL_DEFAULTS.maxTotalMs,
+    };
 
-      const storeCategoryUrl = buildCategoryUrlForStore(categoryUrl, storeId);
-      const autoScrollConfig = {
-        productSelector: SELECTORS.card,
-        maxRounds: Number(args.autoScrollMaxRounds) || AUTO_SCROLL_DEFAULTS.maxRounds,
-        stableRoundsToStop: Number(args.autoScrollStableRounds) || AUTO_SCROLL_DEFAULTS.stableRoundsToStop,
-        perRoundWaitMs: Number(args.autoScrollWaitMs) || AUTO_SCROLL_DEFAULTS.perRoundWaitMs,
-        maxTotalMs: Number(args.autoScrollMaxTotalMs) || AUTO_SCROLL_DEFAULTS.maxTotalMs,
-      };
+    const itemsAllPages = await scrapeStoreAllPages(page, storeUrl, storeId, {
+      extractPage: () => extractProductsOnPage(true),
+      autoScrollConfig,
+      storeName: storeName || city || "",
+      debugDir,
+    });
 
-      const itemsAllPages = await scrapeCategoryAllPages(page, storeCategoryUrl, storeId, {
-        extractPage: () => extractProductsOnPage(true),
-        autoScrollConfig,
-        storeName: storeName || city || "",
-        debugDir,
-      });
+    let deals = itemsAllPages.filter((x) => (x.discount_percent ?? 0) >= 50);
+    deals = dedupeDeals(deals);
 
-      let deals = itemsAllPages.filter((x) => (x.discount_percent ?? 0) >= 50);
-      deals = dedupeDeals(deals);
+    let accepted = 0;
+    for (const deal of deals) {
+      if (registerRecord(deal)) accepted += 1;
+    }
 
-      let accepted = 0;
-      for (const deal of deals) {
-        if (registerRecord(deal)) accepted += 1;
-      }
-
-      console.log(
-        `✅ ${accepted} deal(s) >= 50% agrégés sur ${itemsAllPages.length} item(s) pour ${storeCategoryUrl}`
-      );
-      if (accepted === 0) {
-        console.log("ℹ️  Aucun deal >= 50% trouvé sur l'ensemble des pages de cette catégorie.");
-      }
+    console.log(
+      `✅ ${accepted} deal(s) >= 50% agrégés sur ${itemsAllPages.length} item(s) pour ${storeUrl}`
+    );
+    if (accepted === 0) {
+      console.log("ℹ️  Aucun deal >= 50% trouvé sur l'ensemble des pages de liquidation.");
     }
 
     console.log(
@@ -1480,57 +1361,9 @@ async function scrapeStore(store) {
     const results = allDeals.map((out) => ({ ...out, image_url: out.image_url ?? out.image ?? null }));
 
     await fsExtra.remove(OUT_JSON);
-    await fsExtra.remove(OUT_CSV);
-    const publicStoreDir = path.join(process.cwd(), "public", "canadiantire", storeSlug);
-    const publicJsonPath = path.join(publicStoreDir, "data.json");
-    const publicCsvPath = path.join(publicStoreDir, "data.csv");
-    await fsExtra.remove(publicJsonPath);
-    await fsExtra.remove(publicCsvPath);
 
     fs.writeFileSync(OUT_JSON, JSON.stringify(results, null, 2));
     console.log(`💾  JSON → ${OUT_JSON}`);
-
-    const csv = createObjectCsvWriter({
-      path: OUT_CSV,
-      header: [
-        { id: "store_id", title: "store_id" },
-        { id: "city", title: "city" },
-        { id: "name", title: "name" },
-        { id: "title", title: "title" },
-        { id: "price", title: "price" },
-        { id: "price_raw", title: "price_raw" },
-        ...(INCLUDE_REGULAR_PRICE ? [
-          { id: "regular_price", title: "regular_price" },
-          { id: "regular_price_raw", title: "regular_price_raw" },
-        ] : []),
-        ...(INCLUDE_LIQUIDATION_PRICE ? [
-          { id: "liquidation_price", title: "liquidation_price" },
-          { id: "liquidation_price_raw", title: "liquidation_price_raw" },
-          { id: "sale_price", title: "sale_price" },
-          { id: "sale_price_raw", title: "sale_price_raw" },
-        ] : []),
-        { id: "liquidation", title: "liquidation" },
-        { id: "url", title: "url" },
-        { id: "link", title: "link" },
-        { id: "image", title: "image" },
-        { id: "image_url", title: "image_url" },
-        { id: "product_id", title: "product_id" },
-        { id: "product_number_raw", title: "product_number_raw" },
-        { id: "product_number", title: "product_number" },
-        { id: "product_key", title: "product_key" },
-        { id: "sku", title: "sku" },
-        { id: "sku_formatted", title: "sku_formatted" },
-        { id: "availability", title: "availability" },
-        { id: "availability_text", title: "availability_text" },
-        { id: "stockQty", title: "stockQty" },
-        { id: "badges", title: "badges" },
-        { id: "discount_percent", title: "discount_percent" },
-        { id: "price_sale_clean", title: "price_sale_clean" },
-        { id: "price_original_clean", title: "price_original_clean" },
-      ],
-    });
-    await csv.writeRecords(results);
-    console.log(`📄  CSV  → ${OUT_CSV}`);
 
     console.log(`[SCRAPER] Magasin ${storeId ?? "?"} – terminé`);
   } catch (error) {
@@ -1581,7 +1414,4 @@ run().catch((err) => {
   console.error("[SCRAPER] Erreur fatale :", err);
   process.exit(1);
 });
-
-
-
 
