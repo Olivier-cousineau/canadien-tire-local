@@ -1,0 +1,1362 @@
+[
+  {
+    "storeId": "0271",
+    "storeName": "St. Jerome, QC"
+  },
+  {
+    "storeId": "0649",
+    "storeName": "Blainville, QC"
+  },
+  {
+    "storeId": "0418",
+    "storeName": "Rosemere, QC"
+  },
+  {
+    "storeId": "0641",
+    "storeName": "La Plaine, QC"
+  },
+  {
+    "storeId": "0218",
+    "storeName": "St. Eustache, QC"
+  },
+  {
+    "storeId": "0690",
+    "storeName": "Laval Fabreville, QC"
+  },
+  {
+    "storeId": "0312",
+    "storeName": "Terrebonne, QC"
+  },
+  {
+    "storeId": "0231",
+    "storeName": "Laval Vimont, QC"
+  },
+  {
+    "storeId": "0262",
+    "storeName": "Lachute, QC"
+  },
+  {
+    "storeId": "0300",
+    "storeName": "Laval, Bl. Le Corbusier, QC"
+  },
+  {
+    "storeId": "0155",
+    "storeName": "Laval, Ste-Dorothee, QC"
+  },
+  {
+    "storeId": "0454",
+    "storeName": "Rivieres des Prairies, QC"
+  },
+  {
+    "storeId": "0267",
+    "storeName": "Montreal Nord, QC"
+  },
+  {
+    "storeId": "0234",
+    "storeName": "Dollard des Ormeaux, QC"
+  },
+  {
+    "storeId": "0257",
+    "storeName": "Ste. Agathe des Monts, QC"
+  },
+  {
+    "storeId": "0149",
+    "storeName": "Kirkland, QC"
+  },
+  {
+    "storeId": "0064",
+    "storeName": "Montreal Cremazie & Papineau, QC"
+  },
+  {
+    "storeId": "0235",
+    "storeName": "Ville St. Laurent, QC"
+  },
+  {
+    "storeId": "0292",
+    "storeName": "Marche Central, QC"
+  },
+  {
+    "storeId": "0009",
+    "storeName": "Langelier, QC"
+  },
+  {
+    "storeId": "0247",
+    "storeName": "St. Leonard, QC"
+  },
+  {
+    "storeId": "0303",
+    "storeName": "Pointe aux Trembles, QC"
+  },
+  {
+    "storeId": "0928",
+    "storeName": "Place Versailles, QC"
+  },
+  {
+    "storeId": "0343",
+    "storeName": "Montreal Bellechasse, QC"
+  },
+  {
+    "storeId": "0401",
+    "storeName": "Cote des Neiges, QC"
+  },
+  {
+    "storeId": "0646",
+    "storeName": "Vaudreuil, QC"
+  },
+  {
+    "storeId": "0222",
+    "storeName": "Repentigny, QC"
+  },
+  {
+    "storeId": "0400",
+    "storeName": "Montreal Maisonneuve, QC"
+  },
+  {
+    "storeId": "0181",
+    "storeName": "Ile Perrot, QC"
+  },
+  {
+    "storeId": "0435",
+    "storeName": "Montreal Downtown, QC"
+  },
+  {
+    "storeId": "0627",
+    "storeName": "St. Jacques - Montreal, QC"
+  },
+  {
+    "storeId": "0230",
+    "storeName": "Ville La Salle, QC"
+  },
+  {
+    "storeId": "0117",
+    "storeName": "Verdun, QC"
+  },
+  {
+    "storeId": "0332",
+    "storeName": "Boucherville, QC"
+  },
+  {
+    "storeId": "0256",
+    "storeName": "Longueuil, QC"
+  },
+  {
+    "storeId": "0147",
+    "storeName": "Chateauguay, QC"
+  },
+  {
+    "storeId": "0157",
+    "storeName": "Hawkesbury, ON"
+  },
+  {
+    "storeId": "0190",
+    "storeName": "Greenfield Park, QC"
+  },
+  {
+    "storeId": "0200",
+    "storeName": "Joliette, QC"
+  },
+  {
+    "storeId": "0396",
+    "storeName": "Delson, QC"
+  },
+  {
+    "storeId": "0484",
+    "storeName": "St. Bruno, QC"
+  },
+  {
+    "storeId": "0643",
+    "storeName": "Brossard, QC"
+  },
+  {
+    "storeId": "0115",
+    "storeName": "Valleyfield, QC"
+  },
+  {
+    "storeId": "0461",
+    "storeName": "Mont-Tremblant, QC"
+  },
+  {
+    "storeId": "0228",
+    "storeName": "Beloeil, QC"
+  },
+  {
+    "storeId": "0626",
+    "storeName": "Chambly, QC"
+  },
+  {
+    "storeId": "0238",
+    "storeName": "Alexandria, ON"
+  },
+  {
+    "storeId": "0148",
+    "storeName": "Sorel & Tracy, QC"
+  },
+  {
+    "storeId": "0153",
+    "storeName": "St. Jean-sur-Richelieu, QC"
+  },
+  {
+    "storeId": "0151",
+    "storeName": "St. Hyacinthe, QC"
+  },
+  {
+    "storeId": "0625",
+    "storeName": "Casselman, ON"
+  },
+  {
+    "storeId": "0026",
+    "storeName": "Cornwall, ON"
+  },
+  {
+    "storeId": "0138",
+    "storeName": "Granby, QC"
+  },
+  {
+    "storeId": "0623",
+    "storeName": "Rockland, ON"
+  },
+  {
+    "storeId": "0015",
+    "storeName": "Buckingham, QC"
+  },
+  {
+    "storeId": "0158",
+    "storeName": "Drummondville, QC"
+  },
+  {
+    "storeId": "0274",
+    "storeName": "Cowansville, QC"
+  },
+  {
+    "storeId": "0686",
+    "storeName": "Nicolet, QC"
+  },
+  {
+    "storeId": "0422",
+    "storeName": "Ottawa Orleans, ON"
+  },
+  {
+    "storeId": "0308",
+    "storeName": "Trois-Rivieres, QC"
+  },
+  {
+    "storeId": "0131",
+    "storeName": "Shawinigan, QC"
+  },
+  {
+    "storeId": "0109",
+    "storeName": "Cap-de-la-Madeleine, QC"
+  },
+  {
+    "storeId": "0297",
+    "storeName": "Ottawa Gloucester, ON"
+  },
+  {
+    "storeId": "0659",
+    "storeName": "Leitrim, ON"
+  },
+  {
+    "storeId": "0174",
+    "storeName": "Ottawa East, ON"
+  },
+  {
+    "storeId": "0191",
+    "storeName": "Gatineau, QC"
+  },
+  {
+    "storeId": "0120",
+    "storeName": "Morrisburg, ON"
+  },
+  {
+    "storeId": "0210",
+    "storeName": "Ottawa South, ON"
+  },
+  {
+    "storeId": "0176",
+    "storeName": "Hull, QC"
+  },
+  {
+    "storeId": "0648",
+    "storeName": "Mont-Laurier, QC"
+  },
+  {
+    "storeId": "0258",
+    "storeName": "Ottawa Merivale, ON"
+  },
+  {
+    "storeId": "0318",
+    "storeName": "Gatineau Le Plateau, QC"
+  },
+  {
+    "storeId": "0290",
+    "storeName": "Ottawa Carling Ave, ON"
+  },
+  {
+    "storeId": "0442",
+    "storeName": "Barrhaven, ON"
+  },
+  {
+    "storeId": "0272",
+    "storeName": "Ottawa Bells Cnrs, ON"
+  },
+  {
+    "storeId": "0227",
+    "storeName": "Kemptville, ON"
+  },
+  {
+    "storeId": "0240",
+    "storeName": "Magog, QC"
+  },
+  {
+    "storeId": "0457",
+    "storeName": "Kanata, ON"
+  },
+  {
+    "storeId": "0243",
+    "storeName": "Victoriaville, QC"
+  },
+  {
+    "storeId": "0096",
+    "storeName": "Sherbrooke, QC"
+  },
+  {
+    "storeId": "0196",
+    "storeName": "Maniwaki, QC"
+  },
+  {
+    "storeId": "0085",
+    "storeName": "Prescott, ON"
+  },
+  {
+    "storeId": "0348",
+    "storeName": "Sherbrooke Fleurimont, QC"
+  },
+  {
+    "storeId": "0018",
+    "storeName": "Carleton Place, ON"
+  },
+  {
+    "storeId": "0014",
+    "storeName": "Brockville, ON"
+  },
+  {
+    "storeId": "0098",
+    "storeName": "Smiths Falls, ON"
+  },
+  {
+    "storeId": "0004",
+    "storeName": "Arnprior, ON"
+  },
+  {
+    "storeId": "0099",
+    "storeName": "Shawville, QC"
+  },
+  {
+    "storeId": "0423",
+    "storeName": "Donnacona, QC"
+  },
+  {
+    "storeId": "0080",
+    "storeName": "Perth, ON"
+  },
+  {
+    "storeId": "0352",
+    "storeName": "La Tuque, QC"
+  },
+  {
+    "storeId": "0086",
+    "storeName": "Renfrew, ON"
+  },
+  {
+    "storeId": "0156",
+    "storeName": "Thetford Mines, QC"
+  },
+  {
+    "storeId": "0692",
+    "storeName": "Ancienne Lorette, QC"
+  },
+  {
+    "storeId": "0037",
+    "storeName": "Gananoque, ON"
+  },
+  {
+    "storeId": "0624",
+    "storeName": "St. Romuald, QC"
+  },
+  {
+    "storeId": "0342",
+    "storeName": "Quebec Les Saules, QC"
+  },
+  {
+    "storeId": "0245",
+    "storeName": "Quebec Ste. Foy, QC"
+  },
+  {
+    "storeId": "0079",
+    "storeName": "Pembroke, ON"
+  },
+  {
+    "storeId": "0405",
+    "storeName": "Lebourgneuf, QC"
+  },
+  {
+    "storeId": "0101",
+    "storeName": "Quebec Vanier, QC"
+  },
+  {
+    "storeId": "0416",
+    "storeName": "Ste. Marie De Beauce, QC"
+  },
+  {
+    "storeId": "0225",
+    "storeName": "Lac Megantic, QC"
+  },
+  {
+    "storeId": "0165",
+    "storeName": "Levis, QC"
+  },
+  {
+    "storeId": "0184",
+    "storeName": "Beauport, QC"
+  },
+  {
+    "storeId": "0173",
+    "storeName": "St. Georges, QC"
+  },
+  {
+    "storeId": "0694",
+    "storeName": "Kingston Division St., ON"
+  },
+  {
+    "storeId": "0195",
+    "storeName": "Kingston, ON"
+  },
+  {
+    "storeId": "0417",
+    "storeName": "Kingston Township, ON"
+  },
+  {
+    "storeId": "0253",
+    "storeName": "Deep River, ON"
+  },
+  {
+    "storeId": "0065",
+    "storeName": "Napanee, ON"
+  },
+  {
+    "storeId": "0180",
+    "storeName": "Montmagny, QC"
+  },
+  {
+    "storeId": "0005",
+    "storeName": "Bancroft, ON"
+  },
+  {
+    "storeId": "0082",
+    "storeName": "Picton, ON"
+  },
+  {
+    "storeId": "0007",
+    "storeName": "Belleville, ON"
+  },
+  {
+    "storeId": "0458",
+    "storeName": "Roberval, QC"
+  },
+  {
+    "storeId": "0112",
+    "storeName": "Trenton, ON"
+  },
+  {
+    "storeId": "0017",
+    "storeName": "Campbellford, ON"
+  },
+  {
+    "storeId": "0633",
+    "storeName": "La Pocatiere, QC"
+  },
+  {
+    "storeId": "0298",
+    "storeName": "Alma, QC"
+  },
+  {
+    "storeId": "0306",
+    "storeName": "La Malbaie, QC"
+  },
+  {
+    "storeId": "0221",
+    "storeName": "Jonquiere, QC"
+  },
+  {
+    "storeId": "0268",
+    "storeName": "Chicoutimi, QC"
+  },
+  {
+    "storeId": "0335",
+    "storeName": "La Baie, QC"
+  },
+  {
+    "storeId": "0284",
+    "storeName": "Dolbeau-Mistassini, QC"
+  },
+  {
+    "storeId": "0660",
+    "storeName": "Peterborough North, ON"
+  },
+  {
+    "storeId": "0081",
+    "storeName": "Peterborough, ON"
+  },
+  {
+    "storeId": "0682",
+    "storeName": "Minden, ON"
+  },
+  {
+    "storeId": "0023",
+    "storeName": "Cobourg, ON"
+  },
+  {
+    "storeId": "0114",
+    "storeName": "Val d'Or, QC"
+  },
+  {
+    "storeId": "0038",
+    "storeName": "Fenelon Falls, ON"
+  },
+  {
+    "storeId": "0056",
+    "storeName": "Lindsay, ON"
+  },
+  {
+    "storeId": "0323",
+    "storeName": "Riviere du Loup, QC"
+  },
+  {
+    "storeId": "0047",
+    "storeName": "Huntsville, ON"
+  },
+  {
+    "storeId": "0206",
+    "storeName": "Bracebridge, ON"
+  },
+  {
+    "storeId": "0170",
+    "storeName": "Bowmanville, ON"
+  },
+  {
+    "storeId": "0072",
+    "storeName": "North Bay, ON"
+  },
+  {
+    "storeId": "0062",
+    "storeName": "Gravenhurst, ON"
+  },
+  {
+    "storeId": "0226",
+    "storeName": "Port Perry, ON"
+  },
+  {
+    "storeId": "0336",
+    "storeName": "Oshawa North, ON"
+  },
+  {
+    "storeId": "0075",
+    "storeName": "Oshawa Mid, ON"
+  },
+  {
+    "storeId": "0285",
+    "storeName": "Amos, QC"
+  },
+  {
+    "storeId": "0460",
+    "storeName": "Whitby North, ON"
+  },
+  {
+    "storeId": "0187",
+    "storeName": "Whitby South, ON"
+  },
+  {
+    "storeId": "0074",
+    "storeName": "Orillia, ON"
+  },
+  {
+    "storeId": "0127",
+    "storeName": "Uxbridge, ON"
+  },
+  {
+    "storeId": "0160",
+    "storeName": "Ajax, ON"
+  },
+  {
+    "storeId": "0324",
+    "storeName": "Pickering, ON"
+  },
+  {
+    "storeId": "0102",
+    "storeName": "Sturgeon Falls, ON"
+  },
+  {
+    "storeId": "0134",
+    "storeName": "Keswick, ON"
+  },
+  {
+    "storeId": "0427",
+    "storeName": "Scarborough East, ON"
+  },
+  {
+    "storeId": "0280",
+    "storeName": "Stouffville, ON"
+  },
+  {
+    "storeId": "0399",
+    "storeName": "Markham East, ON"
+  },
+  {
+    "storeId": "0093",
+    "storeName": "Edmundston, NB"
+  },
+  {
+    "storeId": "0687",
+    "storeName": "Innisfil, ON"
+  },
+  {
+    "storeId": "0175",
+    "storeName": "Scarborough, ON"
+  },
+  {
+    "storeId": "0089",
+    "storeName": "Rouyn, QC"
+  },
+  {
+    "storeId": "0078",
+    "storeName": "Parry Sound, ON"
+  },
+  {
+    "storeId": "0264",
+    "storeName": "Agincourt, ON"
+  },
+  {
+    "storeId": "0189",
+    "storeName": "Aurora, ON"
+  },
+  {
+    "storeId": "0069",
+    "storeName": "Newmarket, ON"
+  },
+  {
+    "storeId": "0209",
+    "storeName": "Kingston Rd, ON"
+  },
+  {
+    "storeId": "0164",
+    "storeName": "Markham, ON"
+  },
+  {
+    "storeId": "0006",
+    "storeName": "Barrie, ON"
+  },
+  {
+    "storeId": "0068",
+    "storeName": "New Liskeard, ON"
+  },
+  {
+    "storeId": "0444",
+    "storeName": "Barrie South, ON"
+  },
+  {
+    "storeId": "0030",
+    "storeName": "Warden & Eglinton, ON"
+  },
+  {
+    "storeId": "0061",
+    "storeName": "Midland, ON"
+  },
+  {
+    "storeId": "0446",
+    "storeName": "Bradford, ON"
+  },
+  {
+    "storeId": "0697",
+    "storeName": "Richmond Hill North, ON"
+  },
+  {
+    "storeId": "0087",
+    "storeName": "Richmond Hill, ON"
+  },
+  {
+    "storeId": "0273",
+    "storeName": "Toronto Main & Danforth, ON"
+  },
+  {
+    "storeId": "0192",
+    "storeName": "Sheppard Ave., ON"
+  },
+  {
+    "storeId": "0126",
+    "storeName": "Yonge & Steeles, ON"
+  },
+  {
+    "storeId": "0459",
+    "storeName": "Eglinton & Laird, ON"
+  },
+  {
+    "storeId": "0654",
+    "storeName": "Leslie & Lake Shore, ON"
+  },
+  {
+    "storeId": "0321",
+    "storeName": "Dufferin &"
+  },
+  {
+    "storeId": "0150",
+    "storeName": "Toronto, Yonge & Church, ON"
+  },
+  {
+    "storeId": "0485",
+    "storeName": "Dufferin & Finch Auto Ctr, ON"
+  },
+  {
+    "storeId": "0600",
+    "storeName": "Toronto Eaton Centre, ON"
+  },
+  {
+    "storeId": "0019",
+    "storeName": "Lawrence & Allen Expwy, ON"
+  },
+  {
+    "storeId": "0653",
+    "storeName": "Maple, ON"
+  },
+  {
+    "storeId": "0621",
+    "storeName": "Liberty Village, ON"
+  },
+  {
+    "storeId": "0214",
+    "storeName": "Eglinton & Caledonia, Toronto, ON"
+  },
+  {
+    "storeId": "0237",
+    "storeName": "Woodbridge, ON"
+  },
+  {
+    "storeId": "0182",
+    "storeName": "West Toronto (Stockyards), ON"
+  },
+  {
+    "storeId": "0119",
+    "storeName": "Weston Road &"
+  },
+  {
+    "storeId": "0137",
+    "storeName": "Woodstock, NB"
+  },
+  {
+    "storeId": "0294",
+    "storeName": "Etobicoke, Albion & Kipling, ON"
+  },
+  {
+    "storeId": "0242",
+    "storeName": "Rexdale, ON"
+  },
+  {
+    "storeId": "0001",
+    "storeName": "Alliston, ON"
+  },
+  {
+    "storeId": "0652",
+    "storeName": "Wasaga Beach, ON"
+  },
+  {
+    "storeId": "0197",
+    "storeName": "Bolton, ON"
+  },
+  {
+    "storeId": "0219",
+    "storeName": "Grand Falls, NB"
+  },
+  {
+    "storeId": "0070",
+    "storeName": "The Queensway, ON"
+  },
+  {
+    "storeId": "0152",
+    "storeName": "Miss. Dixie & Dundas, ON"
+  },
+  {
+    "storeId": "0071",
+    "storeName": "Niagara Falls North, ON"
+  },
+  {
+    "storeId": "0305",
+    "storeName": "Brampton Bramalea, ON"
+  },
+  {
+    "storeId": "0162",
+    "storeName": "St. Catharines N., ON"
+  },
+  {
+    "storeId": "0033",
+    "storeName": "Fort Erie, ON"
+  },
+  {
+    "storeId": "0145",
+    "storeName": "St. Catharines S., ON"
+  },
+  {
+    "storeId": "0411",
+    "storeName": "Brampton Trinity Common, ON"
+  },
+  {
+    "storeId": "0346",
+    "storeName": "Miss.Mavis & Dundas, ON"
+  },
+  {
+    "storeId": "0108",
+    "storeName": "Collingwood, ON"
+  },
+  {
+    "storeId": "0090",
+    "storeName": "St. Catharines, ON"
+  },
+  {
+    "storeId": "0320",
+    "storeName": "Rimouski, QC"
+  },
+  {
+    "storeId": "0010",
+    "storeName": "Brampton Shoppers World, ON"
+  },
+  {
+    "storeId": "0497",
+    "storeName": "Mississauga Heartland, ON"
+  },
+  {
+    "storeId": "0241",
+    "storeName": "Mississauga Southdown, ON"
+  },
+  {
+    "storeId": "0675",
+    "storeName": "Brampton McLaughlin Road, ON"
+  },
+  {
+    "storeId": "0424",
+    "storeName": "Oak., Winston Churchill, ON"
+  },
+  {
+    "storeId": "0233",
+    "storeName": "La Sarre, QC"
+  },
+  {
+    "storeId": "0118",
+    "storeName": "Welland, ON"
+  },
+  {
+    "storeId": "0169",
+    "storeName": "Meadowvale, ON"
+  },
+  {
+    "storeId": "0429",
+    "storeName": "Oakville North, ON"
+  },
+  {
+    "storeId": "0143",
+    "storeName": "Oakville, ON"
+  },
+  {
+    "storeId": "0159",
+    "storeName": "Georgetown, ON"
+  },
+  {
+    "storeId": "0073",
+    "storeName": "Orangeville, ON"
+  },
+  {
+    "storeId": "0128",
+    "storeName": "Port Colborne, ON"
+  },
+  {
+    "storeId": "0140",
+    "storeName": "Milton, ON"
+  },
+  {
+    "storeId": "0040",
+    "storeName": "Grimsby, ON"
+  },
+  {
+    "storeId": "0232",
+    "storeName": "St. Stephen, NB"
+  },
+  {
+    "storeId": "0052",
+    "storeName": "Kirkland Lake, ON"
+  },
+  {
+    "storeId": "0412",
+    "storeName": "Burlington North, ON"
+  },
+  {
+    "storeId": "0122",
+    "storeName": "Burlington Fairview, ON"
+  },
+  {
+    "storeId": "0154",
+    "storeName": "Hamilton East, ON"
+  },
+  {
+    "storeId": "0129",
+    "storeName": "Hamilton Centre, ON"
+  },
+  {
+    "storeId": "0278",
+    "storeName": "Sudbury North, ON"
+  },
+  {
+    "storeId": "0220",
+    "storeName": "Waterdown, ON"
+  },
+  {
+    "storeId": "0045",
+    "storeName": "Hamilton Main, ON"
+  },
+  {
+    "storeId": "0194",
+    "storeName": "Hamilton Mt.East, ON"
+  },
+  {
+    "storeId": "0445",
+    "storeName": "Sudbury South, ON"
+  },
+  {
+    "storeId": "0177",
+    "storeName": "Hamilton Mt.West, ON"
+  },
+  {
+    "storeId": "0657",
+    "storeName": "Hanmer, ON"
+  },
+  {
+    "storeId": "0027",
+    "storeName": "Dundas, ON"
+  },
+  {
+    "storeId": "0029",
+    "storeName": "Dunnville, ON"
+  },
+  {
+    "storeId": "0042",
+    "storeName": "Guelph Stone Rd, ON"
+  },
+  {
+    "storeId": "0031",
+    "storeName": "Centre Wellington, ON"
+  },
+  {
+    "storeId": "0260",
+    "storeName": "Guelph North, ON"
+  },
+  {
+    "storeId": "0639",
+    "storeName": "Ancaster, ON"
+  },
+  {
+    "storeId": "0077",
+    "storeName": "Owen Sound, ON"
+  },
+  {
+    "storeId": "0244",
+    "storeName": "Chelmsford, ON"
+  },
+  {
+    "storeId": "0049",
+    "storeName": "Caledonia, ON"
+  },
+  {
+    "storeId": "0168",
+    "storeName": "Cambridge Hespeler, ON"
+  },
+  {
+    "storeId": "0036",
+    "storeName": "Cambridge, ON"
+  },
+  {
+    "storeId": "0035",
+    "storeName": "Fredericton, NB"
+  },
+  {
+    "storeId": "0066",
+    "storeName": "Mount Forest, ON"
+  },
+  {
+    "storeId": "0337",
+    "storeName": "Fredericton North, NB"
+  },
+  {
+    "storeId": "0139",
+    "storeName": "Kitchener East, ON"
+  },
+  {
+    "storeId": "0616",
+    "storeName": "Elmira, ON"
+  },
+  {
+    "storeId": "0053",
+    "storeName": "Kitchener South, ON"
+  },
+  {
+    "storeId": "0664",
+    "storeName": "Brantford North, ON"
+  },
+  {
+    "storeId": "0265",
+    "storeName": "Baie-Comeau, QC"
+  },
+  {
+    "storeId": "0251",
+    "storeName": "Waterloo, ON"
+  },
+  {
+    "storeId": "0420",
+    "storeName": "Kitchener West, ON"
+  },
+  {
+    "storeId": "0046",
+    "storeName": "Hanover, ON"
+  },
+  {
+    "storeId": "0674",
+    "storeName": "Waterloo West, ON"
+  },
+  {
+    "storeId": "0309",
+    "storeName": "Oromocto, NB"
+  },
+  {
+    "storeId": "0043",
+    "storeName": "Paris, ON"
+  },
+  {
+    "storeId": "0315",
+    "storeName": "Matane, QC"
+  },
+  {
+    "storeId": "0057",
+    "storeName": "Listowel, ON"
+  },
+  {
+    "storeId": "0097",
+    "storeName": "Simcoe, ON"
+  },
+  {
+    "storeId": "0269",
+    "storeName": "Port Elgin, ON"
+  },
+  {
+    "storeId": "0022",
+    "storeName": "Espanola, ON"
+  },
+  {
+    "storeId": "0016",
+    "storeName": "Atholville, NB"
+  },
+  {
+    "storeId": "0193",
+    "storeName": "Delhi, ON"
+  },
+  {
+    "storeId": "0124",
+    "storeName": "Woodstock, ON"
+  },
+  {
+    "storeId": "0103",
+    "storeName": "Stratford, ON"
+  },
+  {
+    "storeId": "0349",
+    "storeName": "Saint John Fairville, NB"
+  },
+  {
+    "storeId": "0254",
+    "storeName": "Saint John - Westmorland Road, NB"
+  },
+  {
+    "storeId": "0476",
+    "storeName": "Rothesay, NB"
+  },
+  {
+    "storeId": "0051",
+    "storeName": "Kincardine, ON"
+  },
+  {
+    "storeId": "0048",
+    "storeName": "Ingersoll, ON"
+  },
+  {
+    "storeId": "0110",
+    "storeName": "Tillsonburg, ON"
+  },
+  {
+    "storeId": "0091",
+    "storeName": "St. Marys, ON"
+  },
+  {
+    "storeId": "0111",
+    "storeName": "Timmins, ON"
+  },
+  {
+    "storeId": "0024",
+    "storeName": "Cochrane, ON"
+  },
+  {
+    "storeId": "0130",
+    "storeName": "London East, ON"
+  },
+  {
+    "storeId": "0142",
+    "storeName": "Aylmer, ON"
+  },
+  {
+    "storeId": "0039",
+    "storeName": "Goderich, ON"
+  },
+  {
+    "storeId": "0141",
+    "storeName": "Exeter, ON"
+  },
+  {
+    "storeId": "0494",
+    "storeName": "London Auto Centre, ON"
+  },
+  {
+    "storeId": "0058",
+    "storeName": "London South, ON"
+  },
+  {
+    "storeId": "0106",
+    "storeName": "Sussex, NB"
+  },
+  {
+    "storeId": "0025",
+    "storeName": "Digby, NS"
+  },
+  {
+    "storeId": "0125",
+    "storeName": "Yarmouth, NS"
+  },
+  {
+    "storeId": "0425",
+    "storeName": "London North, ON"
+  },
+  {
+    "storeId": "0208",
+    "storeName": "London West, ON"
+  },
+  {
+    "storeId": "0092",
+    "storeName": "St. Thomas, ON"
+  },
+  {
+    "storeId": "0136",
+    "storeName": "Miramichi, NB"
+  },
+  {
+    "storeId": "0011",
+    "storeName": "Bathurst, NB"
+  },
+  {
+    "storeId": "0167",
+    "storeName": "Elliot Lake, ON"
+  },
+  {
+    "storeId": "0104",
+    "storeName": "Strathroy, ON"
+  },
+  {
+    "storeId": "0032",
+    "storeName": "Forest, ON"
+  },
+  {
+    "storeId": "0249",
+    "storeName": "Moncton Mountain Rd, NB"
+  },
+  {
+    "storeId": "0463",
+    "storeName": "Paspebiac, QC"
+  },
+  {
+    "storeId": "0691",
+    "storeName": "Riverview, NB"
+  },
+  {
+    "storeId": "0261",
+    "storeName": "Greenwood, NS"
+  },
+  {
+    "storeId": "0063",
+    "storeName": "Moncton Dieppe, NB"
+  },
+  {
+    "storeId": "0491",
+    "storeName": "Tracadie - Sheila, NB"
+  },
+  {
+    "storeId": "0647",
+    "storeName": "Shediac, NB"
+  },
+  {
+    "storeId": "0094",
+    "storeName": "Sarnia, ON"
+  },
+  {
+    "storeId": "0008",
+    "storeName": "Blenheim, ON"
+  },
+  {
+    "storeId": "0054",
+    "storeName": "New Minas, NS"
+  },
+  {
+    "storeId": "0178",
+    "storeName": "Kapuskasing, ON"
+  },
+  {
+    "storeId": "0307",
+    "storeName": "Sept-Iles, QC"
+  },
+  {
+    "storeId": "0021",
+    "storeName": "Chatham, ON"
+  },
+  {
+    "storeId": "0135",
+    "storeName": "Wallaceburg, ON"
+  },
+  {
+    "storeId": "0013",
+    "storeName": "Bridgewater, NS"
+  },
+  {
+    "storeId": "0003",
+    "storeName": "Amherst, NS"
+  },
+  {
+    "storeId": "0215",
+    "storeName": "Tilbury, ON"
+  },
+  {
+    "storeId": "0132",
+    "storeName": "Summerside, PEI"
+  },
+  {
+    "storeId": "0456",
+    "storeName": "Gaspe, QC"
+  },
+  {
+    "storeId": "0095",
+    "storeName": "Sault Ste. Marie, ON"
+  },
+  {
+    "storeId": "0618",
+    "storeName": "Tantallon, NS"
+  },
+  {
+    "storeId": "0055",
+    "storeName": "Leamington, ON"
+  },
+  {
+    "storeId": "0199",
+    "storeName": "Windsor East, ON"
+  },
+  {
+    "storeId": "0172",
+    "storeName": "Essex, ON"
+  },
+  {
+    "storeId": "0289",
+    "storeName": "Halifax - Lwr. Sackville, NS"
+  },
+  {
+    "storeId": "0236",
+    "storeName": "Windsor South, ON"
+  },
+  {
+    "storeId": "0224",
+    "storeName": "Halifax - Bedford, NS"
+  },
+  {
+    "storeId": "0465",
+    "storeName": "Halifax - Bayers Lake, NS"
+  },
+  {
+    "storeId": "0121",
+    "storeName": "Windsor University Plaza, ON"
+  },
+  {
+    "storeId": "0186",
+    "storeName": "Halifax - Spryfield, NS"
+  },
+  {
+    "storeId": "0619",
+    "storeName": "Elmsdale, NS"
+  },
+  {
+    "storeId": "0044",
+    "storeName": "Halifax, NS"
+  },
+  {
+    "storeId": "0041",
+    "storeName": "Dartmouth Crossing, NS"
+  },
+  {
+    "storeId": "0436",
+    "storeName": "Halifax - Cole Harbour, NS"
+  },
+  {
+    "storeId": "0113",
+    "storeName": "Truro, NS"
+  },
+  {
+    "storeId": "0281",
+    "storeName": "Amherstburg, ON"
+  },
+  {
+    "storeId": "0020",
+    "storeName": "Charlottetown, PEI"
+  },
+  {
+    "storeId": "0406",
+    "storeName": "Hearst, ON"
+  },
+  {
+    "storeId": "0279",
+    "storeName": "Wawa, ON"
+  },
+  {
+    "storeId": "0067",
+    "storeName": "New Glasgow, NS"
+  },
+  {
+    "storeId": "0002",
+    "storeName": "Antigonish, NS"
+  },
+  {
+    "storeId": "0901",
+    "storeName": "Labrador City, NL"
+  },
+  {
+    "storeId": "0213",
+    "storeName": "Port Hawkesbury, NS"
+  },
+  {
+    "storeId": "0451",
+    "storeName": "Marathon, ON"
+  },
+  {
+    "storeId": "0202",
+    "storeName": "North Sydney, NS"
+  },
+  {
+    "storeId": "0107",
+    "storeName": "Sydney, NS"
+  }
+]
