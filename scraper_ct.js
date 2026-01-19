@@ -21,11 +21,22 @@ import {
   normalizeCtProductNumber,
 } from "./lib/ctProductKey.js";
 
+const args = minimist(process.argv.slice(2), {
+  string: ["storeId", "storeName", "outBase", "maxPages"],
+  boolean: ["debug", "headful", "downloadImages"],
+  default: { maxPages: "120" },
+});
+
 const buildCtKeysFromAvailability = (availabilityText) =>
   buildCtKeysFromText(availabilityText);
 
 const STORES_PATH = path.join(process.cwd(), "data", "canadian_tire_stores.json");
-const allStores = JSON.parse(fs.readFileSync(STORES_PATH, "utf8"));
+let allStores = [];
+if (fs.existsSync(STORES_PATH)) {
+  allStores = JSON.parse(fs.readFileSync(STORES_PATH, "utf8"));
+} else {
+  console.warn(`[SCRAPER] Fichier introuvable: ${STORES_PATH}`);
+}
 
 const rawShardIndex = process.env.SHARD_INDEX;
 const rawTotalShards = process.env.TOTAL_SHARDS;
@@ -36,13 +47,33 @@ const totalShards = rawTotalShards ? parseInt(rawTotalShards, 10) : 0;
 let stopRequested = false;
 
 let storesToProcess = allStores;
+if (storesToProcess.length === 0) {
+  const fallbackStoreId = args.storeId || args.store || null;
+  if (fallbackStoreId) {
+    storesToProcess = [
+      {
+        storeId: String(fallbackStoreId),
+        storeName: String(args.storeName || args.city || ""),
+      },
+    ];
+    console.log(
+      `[SCRAPER] Fallback local → storeId=${fallbackStoreId} storeName=${args.storeName || args.city || ""}`
+    );
+  } else {
+    throw new Error(
+      `[SCRAPER] Impossible de démarrer sans liste de magasins. Fournir --storeId et --storeName ou ajouter ${STORES_PATH}.`
+    );
+  }
+}
+
+const baseStores = allStores.length ? allStores : storesToProcess;
 
 if (!Number.isFinite(shardIndex) || !Number.isFinite(totalShards) || totalShards <= 0) {
-  console.log("[SHARD] Pas de sharding –", allStores.length, "magasins.");
-  storesToProcess = allStores;
+  console.log("[SHARD] Pas de sharding –", baseStores.length, "magasins.");
+  storesToProcess = baseStores;
 } else {
   // Nombre max de magasins par shard (≈8 si 340 magasins / 43 shards)
-  const maxPerShard = Math.ceil(allStores.length / totalShards);
+  const maxPerShard = Math.ceil(baseStores.length / totalShards);
 
   // Sécurité : on limite à 8 magasins par shard même si totalShards change
   const storesPerShard = Math.min(maxPerShard, 8);
@@ -51,9 +82,9 @@ if (!Number.isFinite(shardIndex) || !Number.isFinite(totalShards) || totalShards
   const zeroBasedIndex = Math.max(0, shardIndex - 1);
 
   const start = zeroBasedIndex * storesPerShard;
-  const end = Math.min(start + storesPerShard, allStores.length);
+  const end = Math.min(start + storesPerShard, baseStores.length);
 
-  storesToProcess = allStores.slice(start, end);
+  storesToProcess = baseStores.slice(start, end);
 
   console.log(
     `[SHARD] Shard ${shardIndex}/${totalShards} – magasins index ${start} à ${end - 1} (total: ${storesToProcess.length})`
@@ -104,12 +135,6 @@ function hasReachedTimeLimit() {
 //
 // With these changes, each run of the scraper will correctly write to the folder matching
 // the current store (including 218 St. Eustache), and will not reuse Rosemere's paths.
-
-const args = minimist(process.argv.slice(2), {
-  string: ["storeId", "storeName", "outBase", "maxPages"],
-  boolean: ["debug", "headful", "downloadImages"],
-  default: { maxPages: "120" },
-});
 
 const storeFilter = args.store || args.storeId || null;
 if (storeFilter) {
