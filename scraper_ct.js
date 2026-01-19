@@ -1142,15 +1142,9 @@ async function scrapeStoreAllPages(page, storeUrl, storeId, {
       const m = pageUrl.match(/[?&]store=(\d+)/);
       const storeIdFromUrl = m ? m[1] : null;
       if (storeIdFromUrl || storeId) {
-        const selectionOk = await selectStore(page, {
-          storeId: storeIdFromUrl || storeId,
-          storeName,
-          debugDir,
-        });
-        if (!selectionOk) {
-          throw new Error(`Store selection failed for ${storeIdFromUrl || storeId}`);
-        }
-        await page.goto(pageUrl, { timeout: 120000, waitUntil: "domcontentloaded" }).catch(() => {});
+        console.log(
+          `[STORE] Store déjà défini via l'URL (${storeIdFromUrl || storeId}) → aucune sélection UI.`
+        );
       }
       storeInitialized = true;
     }
@@ -1414,4 +1408,3 @@ run().catch((err) => {
   console.error("[SCRAPER] Erreur fatale :", err);
   process.exit(1);
 });
-
