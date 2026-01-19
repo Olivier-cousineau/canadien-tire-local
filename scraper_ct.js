@@ -1142,9 +1142,21 @@ async function scrapeStoreAllPages(page, storeUrl, storeId, {
       const m = pageUrl.match(/[?&]store=(\d+)/);
       const storeIdFromUrl = m ? m[1] : null;
       if (storeIdFromUrl || storeId) {
+        const targetStoreId = storeIdFromUrl || storeId;
         console.log(
-          `[STORE] Store déjà défini via l'URL (${storeIdFromUrl || storeId}) → aucune sélection UI.`
+          `[STORE] Store déjà défini via l'URL (${targetStoreId}) → aucune sélection UI.`
         );
+        let validated = await waitForStoreApplied(page, targetStoreId, storeName);
+        if (!validated) {
+          console.warn(
+            `[STORE] Store non confirmé via l'URL (${targetStoreId}) → rechargement.`
+          );
+          await page.goto(pageUrl, { timeout: 120000, waitUntil: "domcontentloaded" }).catch(() => {});
+          validated = await waitForStoreApplied(page, targetStoreId, storeName);
+        }
+        if (!validated) {
+          console.warn(`[STORE] Store non confirmé après rechargement (${targetStoreId}).`);
+        }
       }
       storeInitialized = true;
     }
