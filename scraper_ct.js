@@ -558,6 +558,77 @@ function withPageParam(urlStr, pageNum) {
   }
 }
 
+async function waitForPaginationPage(page, pageNum) {
+  const expected = String(pageNum);
+  try {
+    await page.waitForFunction(
+      (selector, expectedText) => {
+        const el = document.querySelector(selector);
+        if (!el) return false;
+        return (el.textContent || "").trim() === expectedText;
+      },
+      SEL.currentPage,
+      expected,
+      { timeout: 15000 }
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function navigateToPaginationPage(page, pageNum, fallbackUrl) {
+  if (pageNum === 1) {
+    await page.goto(fallbackUrl, { timeout: 120000, waitUntil: "domcontentloaded" });
+    return;
+  }
+
+  const nav = page.locator(SEL.paginationNav).first();
+  const navVisible = await nav.isVisible().catch(() => false);
+  if (!navVisible) {
+    console.warn(`[PAGINATION] Pagination introuvable → fallback URL ${fallbackUrl}`);
+    await page.goto(fallbackUrl, { timeout: 120000, waitUntil: "domcontentloaded" });
+    return;
+  }
+
+  const pageButton = nav
+    .locator("a,button")
+    .filter({ hasText: new RegExp(`^\\s*${pageNum}\\s*$`) })
+    .first();
+
+  if (await pageButton.isVisible().catch(() => false)) {
+    await pageButton.click({ timeout: 5000 }).catch(() => {});
+    const ok = await waitForPaginationPage(page, pageNum);
+    if (ok) return;
+  }
+
+  const nextButton = nav
+    .locator(
+      [
+        "a[aria-label*='suivant' i]",
+        "button[aria-label*='suivant' i]",
+        "a[aria-label*='next' i]",
+        "button[aria-label*='next' i]",
+        "a[rel='next']",
+        "button[rel='next']",
+        "a:has-text('›')",
+        "button:has-text('›')",
+        "a:has-text('>')",
+        "button:has-text('>')",
+      ].join(", ")
+    )
+    .first();
+
+  if (await nextButton.isVisible().catch(() => false)) {
+    await nextButton.click({ timeout: 5000 }).catch(() => {});
+    const ok = await waitForPaginationPage(page, pageNum);
+    if (ok) return;
+  }
+
+  console.warn(`[PAGINATION] Navigation par clic impossible → fallback URL ${fallbackUrl}`);
+  await page.goto(fallbackUrl, { timeout: 120000, waitUntil: "domcontentloaded" });
+}
+
 function buildStableDedupKey(record) {
   const productKey = record.product_key || record.productKey;
   if (productKey) {
@@ -1127,7 +1198,7 @@ async function scrapeStoreAllPages(page, storeUrl, storeId, {
     let retries = 3;
     while (retries > 0) {
       try {
-        await page.goto(pageUrl, { timeout: 120000, waitUntil: "domcontentloaded" });
+        await navigateToPaginationPage(page, pageNum, pageUrl);
         break;
       } catch (e) {
         if (--retries === 0) throw e;
@@ -1142,15 +1213,21 @@ async function scrapeStoreAllPages(page, storeUrl, storeId, {
       const m = pageUrl.match(/[?&]store=(\d+)/);
       const storeIdFromUrl = m ? m[1] : null;
       if (storeIdFromUrl || storeId) {
-        const selectionOk = await selectStore(page, {
-          storeId: storeIdFromUrl || storeId,
-          storeName,
-          debugDir,
-        });
-        if (!selectionOk) {
-          throw new Error(`Store selection failed for ${storeIdFromUrl || storeId}`);
+        const targetStoreId = storeIdFromUrl || storeId;
+        console.log(
+          `[STORE] Store déjà défini via l'URL (${targetStoreId}) → aucune sélection UI.`
+        );
+        let validated = await waitForStoreApplied(page, targetStoreId, storeName);
+        if (!validated) {
+          console.warn(
+            `[STORE] Store non confirmé via l'URL (${targetStoreId}) → rechargement.`
+          );
+          await page.goto(pageUrl, { timeout: 120000, waitUntil: "domcontentloaded" }).catch(() => {});
+          validated = await waitForStoreApplied(page, targetStoreId, storeName);
         }
-        await page.goto(pageUrl, { timeout: 120000, waitUntil: "domcontentloaded" }).catch(() => {});
+        if (!validated) {
+          console.warn(`[STORE] Store non confirmé après rechargement (${targetStoreId}).`);
+        }
       }
       storeInitialized = true;
     }
@@ -1414,4 +1491,3 @@ run().catch((err) => {
   console.error("[SCRAPER] Erreur fatale :", err);
   process.exit(1);
 });
-
