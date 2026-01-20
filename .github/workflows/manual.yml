@@ -93,8 +93,14 @@ jobs:
       - name: Download scraper outputs
         uses: actions/download-artifact@v4
         with:
-          pattern: canadiantire-*
-          merge-multiple: true
+          path: artifacts
+
+      - name: Unzip scraper outputs into repo root
+        run: |
+          shopt -s nullglob
+          for zipfile in artifacts/*.zip; do
+            unzip -o "$zipfile" -d .
+          done
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -111,11 +117,21 @@ jobs:
       - name: Rebuild Canadian Tire product index
         run: echo "Rebuild Canadian Tire product index"
 
+      - name: Debug artifact output paths
+        run: |
+          echo "PWD=$(pwd)"
+          ls -la
+          find . -maxdepth 3 -type d -name canadiantire -print
+          find public -maxdepth 3 -type f -print || true
+
       - name: Commit & push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add public/canadiantire outputs/canadiantire
+          git add public/canadiantire 2>/dev/null || true
+          git add public/ct_products_index.json 2>/dev/null || true
+          git add public/canadiantire/_index.json 2>/dev/null || true
+          git add outputs/canadiantire 2>/dev/null || true
           if [ -n "$(git status --porcelain)" ]; then
             git commit -m "Update Canadian Tire (4 stores parallel)"
             git push origin main
