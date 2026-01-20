@@ -284,6 +284,19 @@ function hasPageParam(urlStr, pageNum) {
   }
 }
 
+async function logNavigationDebug(page, { pageNum, responseStatus } = {}) {
+  const finalUrl = page.url();
+  const documentUrl = await page.evaluate(() => document.location.href).catch(() => null);
+  console.log(`[NAV] Final URL after goto: ${finalUrl}`);
+  console.log(`[NAV] document.location.href: ${documentUrl ?? "n/a"}`);
+  if (responseStatus != null) {
+    console.log(`[NAV] HTTP status: ${responseStatus}`);
+  }
+  const hasParam = hasPageParam(finalUrl, pageNum);
+  console.log(`[NAV] page param present: ${hasParam}`);
+  return { finalUrl, documentUrl, hasParam };
+}
+
 async function savePageDebugArtifacts(page, debugDir, { pageNum, label, responseStatus } = {}) {
   if (!debugDir) return;
   await fsExtra.ensureDir(debugDir);
@@ -295,10 +308,12 @@ async function savePageDebugArtifacts(page, debugDir, { pageNum, label, response
 
   const finalUrl = page.url();
   const hasPage = hasPageParam(finalUrl, pageNum);
+  const documentUrl = await page.evaluate(() => document.location.href).catch(() => null);
   const logPayload = [
     `pageNum=${pageNum}`,
     `label=${label || "debug"}`,
     `url=${finalUrl}`,
+    `documentUrl=${documentUrl ?? "n/a"}`,
     `hasPageParam=${hasPage}`,
     `status=${responseStatus ?? "n/a"}`,
   ].join("\n");
@@ -468,12 +483,12 @@ async function extractFromCard(card) {
 
 async function scrapeListing(page, { skipGuards = false } = {}) {
   if (!skipGuards) {
-    await page.waitForSelector(SELECTORS.card, { timeout: 45000 });
+    await page.waitForSelector(SELECTORS.card, { timeout: 60000 });
     await page.waitForSelector("span[data-testid='priceTotal'], .nl-price--total", { timeout: 20000 }).catch(() => {});
   } else {
     const hasCards = await page.locator(SELECTORS.card).count();
     if (!hasCards) {
-      await page.waitForSelector(SELECTORS.card, { timeout: 20000 });
+      await page.waitForSelector(SELECTORS.card, { timeout: 60000 });
     }
   }
 
@@ -736,6 +751,30 @@ async function clickPaginationToPage(page, pageNum, { maxSteps = 10 } = {}) {
   }
 
   return false;
+}
+
+async function waitForProductGridRerender(page, { timeout = 60000 } = {}) {
+  const cards = page.locator(SELECTORS.card);
+  const beforeCount = await cards.count().catch(() => 0);
+  const firstCard = cards.first();
+  let detached = false;
+  await firstCard
+    .waitFor({ state: "detached", timeout: Math.min(timeout, 15000) })
+    .then(() => {
+      detached = true;
+    })
+    .catch(() => {});
+  await page.waitForSelector(SELECTORS.card, { state: "attached", timeout }).catch(() => {});
+  if (!detached) {
+    await page
+      .waitForFunction(
+        (selector, prevCount) => document.querySelectorAll(selector).length !== prevCount,
+        SELECTORS.card,
+        beforeCount,
+        { timeout }
+      )
+      .catch(() => {});
+  }
 }
 
 async function gotoWithRetries(page, url, {
@@ -1335,12 +1374,17 @@ async function scrapeStoreAllPages(page, storeUrl, storeId, {
         networkIdleTimeout: 30000,
       });
       lastResponseStatus = response ? response.status() : null;
-      console.log(`[NAV] Final URL after goto: ${page.url()}`);
-      if (lastResponseStatus != null) {
-        console.log(`[NAV] HTTP status: ${lastResponseStatus}`);
+      const { hasParam } = await logNavigationDebug(page, {
+        pageNum,
+        responseStatus: lastResponseStatus,
+      });
+      if (pageNum === 2) {
+        await savePageDebugArtifacts(page, debugDir, {
+          pageNum,
+          label: "page2-after-goto",
+          responseStatus: lastResponseStatus,
+        });
       }
-      const hasParam = hasPageParam(page.url(), pageNum);
-      console.log(`[NAV] page param present: ${hasParam}`);
       if (pageNum > 1 && !hasParam) {
         console.warn(
           `[NAV] Paramètre page ignoré (page=${pageNum}) → bascule en pagination par clic.`
@@ -1361,6 +1405,10 @@ async function scrapeStoreAllPages(page, storeUrl, storeId, {
       }
       await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
       await closeInterferingPopups(page);
+      await waitForProductGridRerender(page, { timeout: 60000 });
+      if (pageNum === 2) {
+        await logNavigationDebug(page, { pageNum, responseStatus: lastResponseStatus });
+      }
     }
 
     if (!storeInitialized) {
@@ -1395,6 +1443,7 @@ async function scrapeStoreAllPages(page, storeUrl, storeId, {
     });
     if (!isStable) {
       console.log(`[PAGINATION] Page ${pageNum}: produits non détectés après retries.`);
+      break;
     }
 
     await lazyWarmup(page);
