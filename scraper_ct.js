@@ -107,11 +107,10 @@ if (allStores.length === 0) {
 let storesToProcess = allStores;
 
 if (!storeIdCLI) {
-  const storesToRun = allStores.slice(0, 4);
   console.log(
-    `[SCRAPER] Magasins sélectionnés (par défaut) : ${storesToRun.length}`
+    `[SCRAPER] Magasins sélectionnés (par défaut) : ${storesToProcess.length}`
   );
-  const selectedList = storesToRun.map((store) => {
+  const selectedList = storesToProcess.map((store) => {
     const id = store.storeId ?? store.id ?? "?";
     const name = store.storeName ?? store.city ?? store.name ?? "";
     return `${id} – ${name}`.trim();
@@ -119,7 +118,6 @@ if (!storeIdCLI) {
   if (selectedList.length) {
     console.log(`[SCRAPER] Liste sélectionnée: ${selectedList.join(", ")}`);
   }
-  storesToProcess = storesToRun;
 }
 
 const rawShardIndex = process.env.SHARD_INDEX;
