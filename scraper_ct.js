@@ -135,7 +135,11 @@ function hasReachedTimeLimit() {
 
 const storeFilter = args.store || args.storeId || null;
 if (storeFilter) {
-  storesToProcess = storesToProcess.filter((store) => String(store.storeId) === String(storeFilter));
+  const storeFilterNorm = normalizeStoreId(storeFilter);
+  storesToProcess = storesToProcess.filter((store) => {
+    const candidate = normalizeStoreId(store.storeId);
+    return candidate === storeFilterNorm;
+  });
   console.log(`[SCRAPER] Filtre CLI – store=${storeFilter} → ${storesToProcess.length} magasin(s).`);
 }
 
@@ -149,6 +153,11 @@ function parseBooleanArg(value, defaultValue = false) {
     if (["true","1","yes","on"].includes(normalized)) return true;
   }
   return defaultValue;
+}
+
+function normalizeStoreId(value) {
+  if (value == null) return "";
+  return String(value).replace(/^0+/, "");
 }
 
 // ---------- CLI ----------
@@ -169,6 +178,15 @@ const SELECTORS = {
     ".nl-product-card",
   ].join(", "),
 };
+
+const LOAD_MORE_SELECTORS = [
+  "button:has-text('Charger plus')",
+  "button:has-text('Load more')",
+  "a:has-text('Charger plus')",
+  "a:has-text('Load more')",
+  "[data-testid*='load-more']",
+  "[data-testid*='LoadMore']",
+].join(", ");
 
 const AUTO_SCROLL_DEFAULTS = {
   productSelector: SELECTORS.card,
@@ -407,6 +425,32 @@ async function waitProductsStable(page, timeout = 60000) {
     console.warn(
       `[waitProductsStable] Impossible de stabiliser les produits : ${err.message}`
     );
+    return false;
+  }
+}
+
+async function waitForRealCards(page, { timeout = 60000, minRealCards = 1 } = {}) {
+  try {
+    await page.waitForFunction(
+      (cardSelector, minReal) => {
+        const cards = Array.from(document.querySelectorAll(cardSelector));
+        if (!cards.length) return false;
+        const realCards = cards.filter((card) => {
+          const titleEl = card.querySelector("[id^='title__promolisting-'], .nl-product-card__title");
+          const title = titleEl ? titleEl.textContent?.trim() : "";
+          const linkEl = card.querySelector("a[href*='/p/'], a[href*='/product/'], a[href]");
+          const href = linkEl ? linkEl.getAttribute("href") || "" : "";
+          return Boolean(title) || Boolean(href);
+        });
+        return realCards.length >= minReal;
+      },
+      SELECTORS.card,
+      minRealCards,
+      { timeout }
+    );
+    return true;
+  } catch (err) {
+    console.warn(`[waitForRealCards] Timeout/erreur: ${err?.message || err}`);
     return false;
   }
 }
@@ -1245,7 +1289,7 @@ async function clickStoreCard(page, storeId) {
 }
 
 async function waitForStoreApplied(page, storeId, storeName) {
-  const expectedStoreId = String(storeId);
+  const expectedStoreId = normalizeStoreId(storeId);
   const currentUrl = page.url();
   try {
     const parsed = new URL(currentUrl);
@@ -1344,7 +1388,7 @@ async function saveStoreDebugArtifacts(page, storeId, debugDir) {
 }
 
 async function selectStore(page, { storeId, storeName, debugDir } = {}) {
-  const normalizedStoreId = storeId != null ? String(storeId) : "";
+  const normalizedStoreId = normalizeStoreId(storeId);
   if (!normalizedStoreId) return false;
 
   const maxRetries = 2;
@@ -1427,6 +1471,48 @@ async function autoScrollLoadAllProducts(page, {
   }
 
   await page.evaluate(() => window.scrollTo(0, 0));
+}
+
+async function clickLoadMoreUntilNoGrowth(page, {
+  cardSelector = SELECTORS.card,
+  maxClicks = 20,
+  perClickWaitMs = 1200,
+} = {}) {
+  let previousCount = await page.locator(cardSelector).count();
+  let clicks = 0;
+
+  for (let attempt = 1; attempt <= maxClicks; attempt += 1) {
+    const loadMoreButton = page.locator(LOAD_MORE_SELECTORS).first();
+    const visible = await loadMoreButton.isVisible().catch(() => false);
+    if (!visible) {
+      break;
+    }
+
+    await loadMoreButton.scrollIntoViewIfNeeded().catch(() => {});
+    await page.evaluate(() => window.scrollBy(0, window.innerHeight));
+
+    const clicked = await loadMoreButton
+      .click({ timeout: 5000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!clicked) {
+      await loadMoreButton.click({ timeout: 5000, force: true }).catch(() => {});
+    }
+
+    clicks += 1;
+    await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
+    await waitForRealCards(page, { timeout: 30000, minRealCards: 1 });
+    await page.waitForTimeout(perClickWaitMs);
+
+    const newCount = await page.locator(cardSelector).count();
+    console.log(`[PAGINATION] Charger plus: ${previousCount} → ${newCount} (click ${clicks})`);
+    if (newCount <= previousCount) {
+      break;
+    }
+    previousCount = newCount;
+  }
+
+  return { clicks, finalCount: previousCount };
 }
 
 function normalizePaginationBaseUrl(inputUrl) {
@@ -1631,8 +1717,33 @@ async function scrapeCategoryAllPages(page, storeUrl, storeId, {
       break;
     }
 
+    const realCardsReady = await waitForRealCards(page, { timeout: 45000, minRealCards: 1 });
+    if (!realCardsReady) {
+      console.warn(`[PAGINATION] Page ${pageNum}: cartes réelles non détectées à temps.`);
+    }
+
+    await clickLoadMoreUntilNoGrowth(page, { cardSelector: SELECTORS.card });
     await lazyWarmup(page);
     await autoScrollLoadAllProducts(page, autoScrollConfig);
+
+    let pageResult = await extractPage(pageNum);
+    const placeholderCandidate =
+      pageNum > 1 &&
+      pageResult.cardsDetected === 1 &&
+      !pageResult.hasTitle &&
+      !pageResult.hasLink;
+
+    if (placeholderCandidate) {
+      console.warn(`[PAGINATION] Page ${pageNum}: placeholder détecté, retry après reload.`);
+      await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
+      await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
+      await waitProductsStable(page, 60000);
+      await waitForRealCards(page, { timeout: 45000, minRealCards: 1 });
+      await clickLoadMoreUntilNoGrowth(page, { cardSelector: SELECTORS.card });
+      await lazyWarmup(page);
+      await autoScrollLoadAllProducts(page, autoScrollConfig);
+      pageResult = await extractPage(pageNum);
+    }
 
     const {
       records,
@@ -1644,19 +1755,18 @@ async function scrapeCategoryAllPages(page, storeUrl, storeId, {
       withBothPrices,
       deals50,
       hasTitle,
-    } = await extractPage(pageNum);
+      hasLink,
+    } = pageResult;
     console.log(
       `[PAGINATION] Page ${pageNum}: items extraits=${cardsDetected ?? rawCount ?? 0} ` +
       `cardsDetected=${cardsDetected ?? 0} withAnyPrice=${withAnyPrice ?? 0} ` +
       `withBothPrices=${withBothPrices ?? 0} deals50=${deals50 ?? 0}`
     );
 
-    items.push(...records);
-
     const detected = cardsDetected ?? totalProducts ?? 0;
-    if (pageNum > 1 && (detected <= 1 || !hasTitle)) {
-      const stopReason =
-        detected <= 1 ? "placeholder détecté (1 carte)" : "placeholder détecté (titre manquant)";
+    const stillPlaceholder =
+      pageNum > 1 && detected === 1 && !hasTitle && !hasLink;
+    if (stillPlaceholder) {
       if (debugDir) {
         await savePageDebugArtifacts(page, debugDir, {
           pageNum,
@@ -1664,9 +1774,11 @@ async function scrapeCategoryAllPages(page, storeUrl, storeId, {
           responseStatus: lastResponseStatus,
         });
       }
-      console.log(`[PAGINATION] Stop page ${pageNum}: ${stopReason}`);
+      console.log(`[PAGINATION] Stop page ${pageNum}: placeholder persistant.`);
       break;
     }
+
+    items.push(...records);
   }
 
   return items;
@@ -1679,6 +1791,8 @@ async function scrapeStore(store) {
     storeName: store?.storeName ?? store?.city ?? store?.name ?? "",
   };
   const storeId = args.storeId != null ? String(args.storeId) : normalizedStore.storeId;
+  const storeNorm = normalizeStoreId(storeId);
+  const storeIdForUrl = storeNorm || (storeId != null ? String(storeId) : "");
   const city = normalizedStore.storeName || null;
   const cliStoreName = args.storeName ? String(args.storeName) : "";
   const storeName = cliStoreName || normalizedStore.storeName || "";
@@ -1705,7 +1819,7 @@ async function scrapeStore(store) {
   const page = await context.newPage();
   page.setDefaultNavigationTimeout(0);
 
-  const storeContext = { storeId, city: storeName || city || null };
+  const storeContext = { storeId: storeNorm || storeId, city: storeName || city || null };
 
   try {
     await page.route("**/*medallia*", (route) => route.abort());
@@ -1713,7 +1827,7 @@ async function scrapeStore(store) {
     await fsExtra.ensureDir(OUT_BASE);
 
     const baseUrl = DEFAULT_BASE;
-    const storeUrl = `${baseUrl}?store=${storeId}`;
+    const storeUrl = `${baseUrl}?store=${storeIdForUrl}`;
     console.log(`⚙️  Options → liquidation_price=${INCLUDE_LIQUIDATION_PRICE ? "on":"off"}, regular_price=${INCLUDE_REGULAR_PRICE ? "on":"off"}`);
 
     const allDeals = [];
@@ -1734,6 +1848,7 @@ async function scrapeStore(store) {
       const records = [];
       const debugSamples = [];
       const hasTitle = cards.some((card) => Boolean(card?.name || card?.title));
+      const hasLink = cards.some((card) => Boolean(card?.link));
       const stats = {
         cardsDetected: cards.length,
         withAnyPrice: 0,
@@ -1863,6 +1978,7 @@ async function scrapeStore(store) {
         withBothPrices: stats.withBothPrices,
         deals50: stats.deals50,
         hasTitle,
+        hasLink,
       };
     };
 
@@ -1874,7 +1990,7 @@ async function scrapeStore(store) {
       maxTotalMs: Number(args.autoScrollMaxTotalMs) || AUTO_SCROLL_DEFAULTS.maxTotalMs,
     };
 
-    const itemsAllPages = await scrapeCategoryAllPages(page, storeUrl, storeId, {
+    const itemsAllPages = await scrapeCategoryAllPages(page, storeUrl, storeNorm || storeId, {
       extractPage: (pageNum) => extractProductsOnPage(true, pageNum),
       autoScrollConfig,
       storeName: storeName || city || "",
