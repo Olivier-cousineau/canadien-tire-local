@@ -188,8 +188,6 @@ function parseBooleanArg(value, defaultValue = false) {
 }
 
 // ---------- CLI ----------
-const DEFAULT_BASE = "https://www.canadiantire.ca/fr/promotions/liquidation.html";
-
 const HEADLESS  = !args.headful;
 
 const INCLUDE_REGULAR_PRICE    = parseBooleanArg(args["include-regular-price"] ?? args.includeRegularPrice, true);
@@ -594,6 +592,11 @@ function withPageParam(urlStr, pageNum) {
   }
 }
 
+function normalizeStoreId(storeId) {
+  const normalized = String(storeId ?? "").replace(/^0+/, "");
+  return normalized || "0";
+}
+
 function buildStableDedupKey(record) {
   const productKey = record.product_key || record.productKey;
   if (productKey) {
@@ -667,19 +670,6 @@ function resolveOutputPaths(storeId, storeName = "") {
   const jsonPath = path.join(OUT_BASE, "data.json");
   const csvPath = path.join(OUT_BASE, "data.csv");
   return { OUT_BASE, jsonPath, csvPath };
-}
-
-function buildCategoryUrlForStore(categoryUrl, storeId) {
-  if (!categoryUrl) return DEFAULT_BASE;
-  try {
-    const url = new URL(categoryUrl, BASE);
-    if (storeId) {
-      url.searchParams.set("store", storeId);
-    }
-    return url.toString();
-  } catch {
-    return categoryUrl;
-  }
 }
 
 function normalizeAvailabilityInfo(rawAvailability, stockQtyInput = null) {
@@ -916,67 +906,10 @@ async function maybeCloseStoreModal(page) {
   }
 }
 
-let cachedCategoryUrls = null;
-let categoryFetchPromise = null;
-
-async function fetchCategoryUrls() {
-  const browser = await chromium.launch({ headless: HEADLESS, args: ["--disable-dev-shm-usage"] });
-  const context = await browser.newContext({ locale: "fr-CA" });
-  context.setDefaultTimeout(0);
-  const page = await context.newPage();
-  page.setDefaultNavigationTimeout(0);
-
-  await page.route("**/*medallia*", (route) => route.abort());
-  await page.route("**/resources.digital-cloud.medallia.ca/**", (route) => route.abort());
-
-  try {
-    await page.goto(DEFAULT_BASE, { timeout: 120000, waitUntil: "domcontentloaded" });
-    await maybeCloseStoreModal(page);
-
-    const links = await page
-      .locator("a[href*='/fr/promotions/liquidation/']")
-      .evaluateAll((anchors, base) => {
-        const urls = anchors
-          .map((anchor) => anchor.getAttribute("href"))
-          .filter(Boolean)
-          .map((href) => {
-            try {
-              const u = new URL(href, base);
-              u.hash = "";
-              return u.toString();
-            } catch {
-              return null;
-            }
-          })
-          .filter(Boolean)
-          .filter((href) => href.includes("/fr/promotions/liquidation/"));
-
-        return Array.from(new Set(urls));
-      }, BASE);
-
-    console.log(`[SCRAPER] ${links.length} catégorie(s) détectée(s) sur la page de liquidation.`);
-    return links;
-  } catch (error) {
-    console.error("[SCRAPER] Impossible de récupérer les catégories de liquidation :", error);
-    return [];
-  } finally {
-    await browser.close();
-  }
+async function closeInt(page) {
+  await maybeCloseStoreModal(page);
 }
 
-async function getCategoryUrls() {
-  if (cachedCategoryUrls) return cachedCategoryUrls;
-
-  if (!categoryFetchPromise) {
-    categoryFetchPromise = fetchCategoryUrls().catch((error) => {
-      console.error("[SCRAPER] Échec lors de la récupération des catégories :", error);
-      return [];
-    });
-  }
-
-  cachedCategoryUrls = await categoryFetchPromise;
-  return cachedCategoryUrls;
-}
 
 const STORE_SELECTORS = {
   openButtons: [
@@ -1381,10 +1314,14 @@ async function scrapeStore(store) {
     await page.route("**/resources.digital-cloud.medallia.ca/**", (route) => route.abort());
     await fsExtra.ensureDir(OUT_BASE);
 
-    const categoryUrls = await getCategoryUrls();
-    const urlsToProcess = categoryUrls.length ? categoryUrls : [DEFAULT_BASE];
+    const storeNorm = normalizeStoreId(storeId ?? "");
+    const targetUrl = `https://www.canadiantire.ca/fr/promotions/liquidation.html?store=${storeNorm}`;
+    await page.goto(targetUrl, { timeout: 120000, waitUntil: "domcontentloaded" });
+    await closeInt(page);
+
+    const urlsToProcess = [targetUrl];
     console.log(
-      `[SCRAPER] ${urlsToProcess.length} catégorie(s) à parcourir pour le magasin ${storeId ?? "?"}.`
+      `[SCRAPER] Accès direct liquidation pour le magasin ${storeId ?? "?"} → ${targetUrl}`
     );
     console.log(`⚙️  Options → liquidation_price=${INCLUDE_LIQUIDATION_PRICE ? "on":"off"}, regular_price=${INCLUDE_REGULAR_PRICE ? "on":"off"}`);
 
@@ -1474,7 +1411,7 @@ async function scrapeStore(store) {
         break;
       }
 
-      const storeCategoryUrl = buildCategoryUrlForStore(categoryUrl, storeId);
+      const storeCategoryUrl = categoryUrl;
       const autoScrollConfig = {
         productSelector: SELECTORS.card,
         maxRounds: Number(args.autoScrollMaxRounds) || AUTO_SCROLL_DEFAULTS.maxRounds,
