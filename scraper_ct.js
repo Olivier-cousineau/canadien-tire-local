@@ -81,9 +81,9 @@ function safeLoadStores() {
 // the current store (including 218 St. Eustache), and will not reuse Rosemere's paths.
 
 const args = minimist(process.argv.slice(2), {
-  string: ["storeId", "storeName", "outBase", "maxPages"],
+  string: ["storeId", "storeName", "outBase", "maxPages", "concurrency"],
   boolean: ["debug", "headful", "downloadImages"],
-  default: { maxPages: "120" },
+  default: { maxPages: "120", concurrency: "4" },
 });
 
 const storeIdCLI = args.storeId != null ? String(args.storeId) : "";
@@ -133,9 +133,10 @@ if (!Number.isFinite(shardIndex) || !Number.isFinite(totalShards) || totalShards
   );
 }
 
-console.log(
-  `[SCRAPER] ${storesToProcess.length} magasins à traiter, 4 en parallèle.`
-);
+const parsedConcurrency = Number.parseInt(String(args.concurrency), 10);
+const CONCURRENCY = Number.isFinite(parsedConcurrency) && parsedConcurrency > 0
+  ? parsedConcurrency
+  : 4;
 
 const storeFilter = args.store || args.storeId || null;
 if (storeFilter) {
@@ -1552,10 +1553,10 @@ async function scrapeStore(store) {
   }
 }
 
-const CONCURRENCY = 4; // 4 magasins en parallèle
-
 async function run() {
-  console.log(`[SCRAPER] ${storesToProcess.length} magasins à traiter, ${CONCURRENCY} en parallèle.`);
+  console.log(
+    `[SCRAPER] ${storesToProcess.length} magasins à traiter, ${CONCURRENCY} en parallèle.`
+  );
 
   for (let i = 0; i < storesToProcess.length; i += CONCURRENCY) {
     if (hasReachedTimeLimit()) {
