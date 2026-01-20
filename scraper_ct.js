@@ -179,6 +179,15 @@ const SELECTORS = {
   ].join(", "),
 };
 
+const CARD_COUNT_SELECTOR = [
+  "[data-testid*='product-card']",
+  "article",
+  ".product-card",
+  "[class*='productCard']",
+  "li[data-testid='product-grids']",
+  ".nl-product-card",
+].join(", ");
+
 const NETWORKIDLE_RACE_TIMEOUT_MS = 6000;
 
 async function waitForNetworkIdleOrTimeout(page, label = "") {
@@ -241,14 +250,6 @@ const LOAD_MORE_SELECTORS = [
   "[data-testid*='load-more']",
   "[data-testid*='LoadMore']",
 ].join(", ");
-
-const AUTO_SCROLL_DEFAULTS = {
-  productSelector: SELECTORS.card,
-  maxRounds: 25,
-  stableRoundsToStop: 3,
-  perRoundWaitMs: 800,
-  maxTotalMs: 20000,
-};
 
 const PAGINATION_NAV_SELECTOR = [
   "nav[aria-label*='pagination' i]",
@@ -510,37 +511,50 @@ async function waitProductsStable(page, timeout = 60000) {
 }
 
 async function waitForRealCards(page, { timeout = 60000, minRealCards = 5 } = {}) {
-  try {
-    await withAwaitLog(
-      `waitForFunction real cards (timeout=${timeout}, min=${minRealCards})`,
-      () =>
-        page.waitForFunction(
-          (cardSelector, minReal) => {
-            const cards = Array.from(document.querySelectorAll(cardSelector));
-            if (!cards.length) return false;
-            const realCards = cards.filter((card) => {
-              const linkEl = card.querySelector(
-                "a[href*='/p/'], a[href*='/product/'], a[href*='/produit/']"
-              );
-              const href = linkEl ? linkEl.getAttribute("href") || "" : "";
-              const dataSku =
-                card.getAttribute("data-sku") ||
-                card.getAttribute("data-product-sku") ||
-                "";
-              return Boolean(href) || Boolean(dataSku?.trim());
-            });
-            return realCards.length >= minReal;
-          },
-          SELECTORS.card,
-          minRealCards,
-          { timeout }
-        )
-    );
-    return true;
-  } catch (err) {
-    console.warn(`[waitForRealCards] Timeout/erreur: ${err?.message || err}`);
-    return false;
+  const checkPlaceholder = async () => {
+    return page.evaluate((cardSelector) => {
+      const cards = Array.from(document.querySelectorAll(cardSelector));
+      const cardsDetected = cards.length;
+      const realCards = cards.filter((card) => {
+        const linkEl = card.querySelector("a[href*='/p/'], a[href*='/product/'], a[href*='/produit/']");
+        const href = linkEl ? linkEl.getAttribute("href") || "" : "";
+        const sku =
+          card.getAttribute("data-sku") ||
+          card.getAttribute("data-product-id") ||
+          card.getAttribute("data-productid") ||
+          "";
+        return Boolean(href) || Boolean(sku);
+      });
+      return { cardsDetected, realCards: realCards.length };
+    }, SELECTORS.card);
+  };
+
+  let placeholderReloaded = false;
+  const start = Date.now();
+
+  while (Date.now() - start < timeout) {
+    const { cardsDetected, realCards } = await checkPlaceholder();
+    if (realCards >= minRealCards) return true;
+
+    if (cardsDetected <= 2 && realCards === 0) {
+      if (!placeholderReloaded) {
+        placeholderReloaded = true;
+        console.warn("[waitForRealCards] Placeholder détecté → reload unique.");
+        await withAwaitLog("reload page (waitForRealCards placeholder)", () =>
+          page.reload({ waitUntil: "domcontentloaded" }).catch(() => {})
+        );
+        await waitForNetworkIdleOrTimeout(page, "after reload placeholder (waitForRealCards)");
+        continue;
+      }
+      console.warn("[waitForRealCards] Placeholder persistant, arrêt propre.");
+      return false;
+    }
+
+    await page.waitForTimeout(800);
   }
+
+  console.warn("[waitForRealCards] Timeout/erreur: seuil non atteint.");
+  return false;
 }
 
 async function getRealCardStats(page) {
@@ -941,9 +955,11 @@ async function clickPaginationNext(page, targetPage) {
   const current = nav.locator("[aria-current], [aria-current=\"page\"]").first();
   const nextFromCurrent = current.locator("xpath=following::a[1] | xpath=following::button[1]").first();
   const relNext = page.locator("a[rel='next'], button[rel='next']").first();
+  const textNext = nav.locator("a:has-text('Suivant'), button:has-text('Suivant'), a:has-text('Next'), button:has-text('Next')").first();
 
   const candidates = [
     { locator: numberTarget, reason: "numeric" },
+    { locator: textNext, reason: "text-next" },
     { locator: nextFromCurrent, reason: "relative-next" },
     { locator: relNext, reason: "rel-next" },
   ];
@@ -1585,58 +1601,38 @@ async function selectStore(page, { storeId, storeName, debugDir } = {}) {
   return false;
 }
 
-async function autoScrollLoadAllProducts(page, {
-  productSelector = 'a[href*="/pdp/"]',
-  maxRounds = 25,
-  stableRoundsToStop = 3,
-  perRoundWaitMs = 800,
-  maxTotalMs = 20000,
-} = {}) {
+async function scrollUntilCardsStop(page) {
   const start = Date.now();
-
-  let lastCount = await page.locator(productSelector).count();
-  let lastHeight = await page.evaluate(() => document.body.scrollHeight);
-  console.log(`[PAGINATION] Auto-scroll: démarrage avec ${lastCount} produits.`);
-  console.log("[AWAIT] ▶ autoScrollLoadAllProducts start");
-
+  const maxTotalMs = 3 * 60 * 1000;
+  const stableRoundsToStop = 3;
   let stable = 0;
+  let lastCount = await page.locator(CARD_COUNT_SELECTOR).count();
 
-  for (let round = 1; round <= maxRounds; round++) {
+  console.log(`[SCROLL] start cards=${lastCount}`);
+
+  for (let round = 1; ; round += 1) {
     if (Date.now() - start > maxTotalMs) {
-      console.log(`[PAGINATION] Auto-scroll: timeout global atteint (${maxTotalMs}ms). Stop.`);
+      console.log("[SCROLL] timeout global atteint (3 minutes).");
       break;
     }
 
-    await withAwaitLog(`autoScroll round ${round} scroll to bottom`, () =>
-      page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
-    );
-    await withAwaitLog(`autoScroll round ${round} wait ${perRoundWaitMs}ms`, () =>
-      page.waitForTimeout(perRoundWaitMs)
-    );
+    await page.mouse.wheel(0, 1600);
+    await page.evaluate(() => window.scrollBy(0, 1200));
 
-    const count = await page.locator(productSelector).count();
-    const height = await page.evaluate(() => document.body.scrollHeight);
+    const waitMs = 600 + Math.floor(Math.random() * 301);
+    await page.waitForTimeout(waitMs);
 
-    const countChanged = count !== lastCount;
-    const heightChanged = height !== lastHeight;
-
-    if (countChanged || heightChanged) {
-      console.log(`[PAGINATION] Round ${round}: produits ${lastCount}→${count}, height ${lastHeight}→${height}`);
+    const count = await page.locator(CARD_COUNT_SELECTOR).count();
+    if (count > lastCount) {
       lastCount = count;
-      lastHeight = height;
       stable = 0;
     } else {
-      stable++;
-      console.log(`[PAGINATION] Round ${round}: stable (${stable}/${stableRoundsToStop})`);
-      if (stable >= stableRoundsToStop) {
-        console.log(`[PAGINATION] Auto-scroll: stable, stop.`);
-        break;
-      }
+      stable += 1;
     }
-  }
 
-  await withAwaitLog("autoScroll back to top", () => page.evaluate(() => window.scrollTo(0, 0)));
-  console.log("[AWAIT] ✓ autoScrollLoadAllProducts end");
+    console.log(`[SCROLL] cards=${count} stable=${stable}/${stableRoundsToStop}`);
+    if (stable >= stableRoundsToStop) break;
+  }
 }
 
 async function clickLoadMoreUntilNoGrowth(page, {
@@ -1724,43 +1720,8 @@ function buildPaginationUrl(baseUrl, pageNum) {
   }
 }
 
-async function navigateToPaginationUrl(page, baseUrl, pageNum, signatureBefore, {
-  debugDir,
-  responseStatus,
-} = {}) {
-  const pageUrl = buildPaginationUrl(baseUrl, pageNum);
-  console.log(`[PAGINATION] Navigation directe vers la page ${pageNum}: ${pageUrl}`);
-  const response = await gotoWithRetries(page, pageUrl, {
-    attempts: 2,
-    waitUntil: "domcontentloaded",
-    networkIdleTimeout: 30000,
-  });
-  const lastResponseStatus = response ? response.status() : responseStatus;
-  await logNavigationDebug(page, { pageNum, responseStatus: lastResponseStatus });
-  await withAwaitLog("waitForLoadState domcontentloaded (pagination direct)", () =>
-    page.waitForLoadState("domcontentloaded", { timeout: 30000 })
-  ).catch(() => {});
-  await withAwaitLog("waitProductsStable (pagination direct)", () => waitProductsStable(page, 60000));
-  await withAwaitLog("closeInterferingPopups (pagination direct)", () =>
-    closeInterferingPopups(page)
-  );
-  const signatureChanged = await withAwaitLog(
-    "waitForListingSignatureChange (pagination direct)",
-    () => waitForListingSignatureChange(page, signatureBefore, { timeout: 25000 })
-  );
-  if (!signatureChanged && debugDir) {
-    await savePageDebugArtifacts(page, debugDir, {
-      pageNum,
-      label: "pagination-direct-navigation-stuck",
-      responseStatus: lastResponseStatus,
-    });
-  }
-  return { signatureChanged, responseStatus: lastResponseStatus };
-}
-
 async function scrapeCategoryAllPages(page, storeUrl, storeId, {
   extractPage,
-  autoScrollConfig,
   storeName,
   debugDir,
 } = {}) {
@@ -1804,50 +1765,173 @@ async function scrapeCategoryAllPages(page, storeUrl, storeId, {
         return;
       }
 
-      if (!storeInitialized) {
-        const m = storeUrl.match(/[?&]store=(\d+)/);
-        const storeIdFromUrl = m ? m[1] : null;
-        if (storeIdFromUrl || storeId) {
-          const targetStoreId = storeIdFromUrl || storeId;
-          console.log(
-            `[STORE] Store déjà défini via l'URL (${targetStoreId}) → aucune sélection UI.`
-          );
-          const validated = await withAwaitLog(
-            `waitForStoreApplied (url store ${targetStoreId})`,
-            () => waitForStoreApplied(page, targetStoreId, storeName)
-          );
-          if (!validated) {
-            console.warn(
-              `[STORE] Store non confirmé via l'URL (${targetStoreId}).`
+      try {
+        await Promise.race([
+          (async () => {
+            if (pageNum > 1) {
+              if (reachedEnd || clickFailed) {
+                return;
+              }
+              let changed = false;
+              const maxClickRetries = 3;
+
+              for (let attempt = 1; attempt <= maxClickRetries; attempt += 1) {
+                const signatureBefore = await getListingSignature(page);
+                console.log("[PAGINATION] Scroll bas pour pagination UI.");
+                await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+                await page.waitForTimeout(800);
+                const { clicked, reason } = await clickPaginationNext(page, pageNum);
+                if (!clicked) {
+                  if (reason === "disabled-target" || reason === "missing-target" || reason === "missing-nav") {
+                    console.log(`[PAGINATION] Stop page ${pageNum}: cible pagination absente/désactivée.`);
+                    reachedEnd = true;
+                    if (debugDir) {
+                      await savePageDebugArtifacts(page, debugDir, {
+                        pageNum,
+                        label: "pagination-missing-target",
+                        responseStatus: lastResponseStatus,
+                      });
+                    }
+                  } else {
+                    clickFailed = true;
+                  }
+                  break;
+                }
+
+                await withAwaitLog("waitForLoadState domcontentloaded (pagination click)", () =>
+                  page.waitForLoadState("domcontentloaded", { timeout: 30000 })
+                ).catch(() => {});
+                await withAwaitLog("waitProductsStable (pagination click)", () => waitProductsStable(page, 60000));
+                const signatureChanged = await withAwaitLog(
+                  "waitForListingSignatureChange (pagination click)",
+                  () => waitForListingSignatureChange(page, signatureBefore, { timeout: 25000 })
+                );
+                await withAwaitLog("closeInterferingPopups (pagination click)", () =>
+                  closeInterferingPopups(page)
+                );
+                if (signatureChanged) {
+                  changed = true;
+                  break;
+                }
+                console.warn(
+                  `[PAGINATION] Page ${pageNum}: signature inchangée après clic (${attempt}/${maxClickRetries}).`
+                );
+                await withAwaitLog("pagination click retry wait 1500ms", () => page.waitForTimeout(1500));
+              }
+
+              if (!changed) {
+                console.warn(
+                  `[PAGINATION] Stop page ${pageNum}: signature inchangée après ${maxClickRetries} essais.`
+                );
+                if (debugDir) {
+                  await savePageDebugArtifacts(page, debugDir, {
+                    pageNum,
+                    label: "pagination-signature-stuck",
+                    responseStatus: lastResponseStatus,
+                  });
+                }
+                return;
+              }
+            }
+
+            if (!storeInitialized) {
+              const m = storeUrl.match(/[?&]store=(\d+)/);
+              const storeIdFromUrl = m ? m[1] : null;
+              if (storeIdFromUrl || storeId) {
+                const targetStoreId = storeIdFromUrl || storeId;
+                console.log(
+                  `[STORE] Store déjà défini via l'URL (${targetStoreId}) → aucune sélection UI.`
+                );
+                let validated = await withAwaitLog(
+                  `waitForStoreApplied (url store ${targetStoreId})`,
+                  () => waitForStoreApplied(page, targetStoreId, storeName)
+                );
+                if (!validated) {
+                  console.warn(
+                    `[STORE] Store non confirmé via l'URL (${targetStoreId}).`
+                  );
+                }
+              }
+              storeInitialized = true;
+            }
+
+            const isStable = await withAwaitLog(
+              `waitProductsStableWithRetries page ${pageNum}`,
+              () =>
+                waitProductsStableWithRetries(page, {
+                  timeout: 60000,
+                  retries: 2,
+                  pageNum,
+                  debugDir,
+                  responseStatus: lastResponseStatus,
+                })
+            );
+            if (!isStable) {
+              console.log(`[PAGINATION] Page ${pageNum}: produits non détectés après retries.`);
+              return;
+            }
+
+            const realCardsReady = await withAwaitLog(
+              `waitForRealCards page ${pageNum}`,
+              () => waitForRealCards(page, { timeout: 45000, minRealCards: 5 })
             );
           }
         }
         storeInitialized = true;
       }
 
-      const isStable = await withAwaitLog(
-        `waitProductsStableWithRetries page ${pageNum}`,
-        () =>
-          waitProductsStableWithRetries(page, {
-            timeout: 60000,
-            retries: 2,
-            pageNum,
-            debugDir,
-            responseStatus: lastResponseStatus,
-          })
-      );
-      if (!isStable) {
-        console.log(`[PAGINATION] Page ${pageNum}: produits non détectés après retries.`);
-        return;
-      }
+            await withAwaitLog(`scrollUntilCardsStop page ${pageNum}`, () =>
+              scrollUntilCardsStop(page)
+            );
+            await lazyWarmup(page);
 
-      const realCardsReady = await withAwaitLog(
-        `waitForRealCards page ${pageNum}`,
-        () => waitForRealCards(page, { timeout: 45000, minRealCards: 5 })
-      );
-      if (!realCardsReady) {
-        console.warn(`[PAGINATION] Page ${pageNum}: cartes réelles non détectées à temps.`);
-      }
+            let pageResult = await withAwaitLog(
+              `extractPage page ${pageNum}`,
+              () => extractPage(pageNum)
+            );
+            const placeholderCandidate =
+              pageNum > 1 &&
+              pageResult.cardsDetected === 1 &&
+              !pageResult.hasTitle &&
+              !pageResult.hasLink;
+
+            if (placeholderCandidate) {
+              console.warn(`[PAGINATION] Page ${pageNum}: placeholder détecté, retry après reload.`);
+              await withAwaitLog("reload page (placeholder)", () =>
+                page.reload({ waitUntil: "domcontentloaded" }).catch(() => {})
+              );
+              await waitForNetworkIdleOrTimeout(page, "after reload placeholder");
+              await withAwaitLog("waitProductsStable after reload", () => waitProductsStable(page, 60000));
+              await withAwaitLog("waitForRealCards after reload", () =>
+                waitForRealCards(page, { timeout: 45000, minRealCards: 5 })
+              );
+              await withAwaitLog("scrollUntilCardsStop after reload", () =>
+                scrollUntilCardsStop(page)
+              );
+              await lazyWarmup(page);
+              pageResult = await withAwaitLog(
+                `extractPage retry page ${pageNum}`,
+                () => extractPage(pageNum)
+              );
+            }
+
+            const {
+              records,
+              totalProducts,
+              rawCount,
+              productKeys,
+              cardsDetected,
+              withAnyPrice,
+              withBothPrices,
+              deals50,
+              hasTitle,
+              hasLink,
+            } = pageResult;
+            console.log(
+              `[PAGINATION] Page ${pageNum}: items extraits=${cardsDetected ?? rawCount ?? 0} ` +
+              `cardsDetected=${cardsDetected ?? 0} withAnyPrice=${withAnyPrice ?? 0} ` +
+              `withBothPrices=${withBothPrices ?? 0} deals50=${deals50 ?? 0}`
+            );
 
       let realCardStats = await getRealCardStats(page);
       const placeholderCandidate =
@@ -2114,17 +2198,8 @@ async function scrapeStore(store) {
       };
     };
 
-    const autoScrollConfig = {
-      productSelector: SELECTORS.card,
-      maxRounds: Number(args.autoScrollMaxRounds) || AUTO_SCROLL_DEFAULTS.maxRounds,
-      stableRoundsToStop: Number(args.autoScrollStableRounds) || AUTO_SCROLL_DEFAULTS.stableRoundsToStop,
-      perRoundWaitMs: Number(args.autoScrollWaitMs) || AUTO_SCROLL_DEFAULTS.perRoundWaitMs,
-      maxTotalMs: Number(args.autoScrollMaxTotalMs) || AUTO_SCROLL_DEFAULTS.maxTotalMs,
-    };
-
     const itemsAllPages = await scrapeCategoryAllPages(page, storeUrl, storeNorm || storeId, {
       extractPage: (pageNum) => extractProductsOnPage(true, pageNum),
-      autoScrollConfig,
       storeName: storeName || city || "",
       debugDir,
     });
