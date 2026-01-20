@@ -91,10 +91,20 @@ jobs:
     runs-on: ubuntu-latest
     needs: scrape
     steps:
+      - name: Debug ECONOPLUS secret presence
+        run: |
+          if [ -z "${{ secrets.ECONOPLUS }}" ]; then
+            echo "ECONOPLUS secret is missing."
+            exit 1
+          fi
+          echo "ECONOPLUS secret is present."
+
       - name: Checkout ECONOPLUS repository
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/ECONOPLUS
+          repository: Olivier-cousineau/econoplus
+          token: ${{ secrets.ECONOPLUS }}
+          ref: main
           path: econoplus
 
       - name: Download scraper outputs
