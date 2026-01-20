@@ -31,7 +31,7 @@ jobs:
             console.log(`- ${store.storeId} | ${store.storeName}`);
           }
 
-          const matrix = JSON.stringify(stores);
+          const matrix = JSON.stringify({ include: stores });
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${matrix}\n`);
           NODE
 
@@ -56,7 +56,7 @@ jobs:
         run: npm ci
 
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps
+        run: npx playwright install chromium
 
       - name: Log selected store
         run: echo "Scraping storeId=${{ matrix.storeId }} storeName=${{ matrix.storeName }}"
