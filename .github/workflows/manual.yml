@@ -114,23 +114,7 @@ jobs:
           SHARDS_TOTAL: ${{ needs.prepare.outputs.shards_total }}
 
       - name: Run scraper for shard stores
-        run: |
-          node - <<'NODE'
-          const { spawnSync } = require("child_process");
-          const fs = require("fs");
-          const stores = JSON.parse(fs.readFileSync("stores_for_shard.json", "utf8"));
-          for (const store of stores) {
-            console.log(`Scraping storeId=${store.storeId} storeName=${store.storeName}`);
-            const result = spawnSync(
-              "node",
-              ["scraper_ct.js", "--storeId", store.storeId, "--storeName", store.storeName],
-              { stdio: "inherit" }
-            );
-            if (result.status !== 0) {
-              process.exit(result.status ?? 1);
-            }
-          }
-          NODE
+        run: node scraper_ct.js --storesFile stores_for_shard.json
 
       - name: Upload scraper outputs
         uses: actions/upload-artifact@v4
