@@ -757,38 +757,59 @@ function normalizeProductUrlForDedup(rawUrl) {
   }
 }
 
-async function clickPaginationNext(page) {
+async function clickPaginationNext(page, targetPage) {
   const nav = page.locator(SEL.paginationNav).first();
   const navVisible = await nav.isVisible().catch(() => false);
   if (!navVisible) return { clicked: false, reason: "missing-nav" };
 
-  const nextButton = nav
+  const targetLabel = targetPage ? String(targetPage) : "2";
+  const numberTarget = nav
     .locator(
       [
-        "button[aria-label*='suivant' i]",
-        "a[aria-label*='suivant' i]",
-        "button:has-text('Suivant')",
-        "a:has-text('Suivant')",
-        "button[rel='next']",
-        "a[rel='next']",
+        `a[aria-label*='${targetLabel}']`,
+        `button:has-text('${targetLabel}')`,
+        `a:has-text('${targetLabel}')`,
       ].join(", ")
     )
     .first();
 
-  const visible = await nextButton.isVisible().catch(() => false);
-  if (!visible) return { clicked: false, reason: "missing-next" };
-  const disabledAttr = await nextButton.getAttribute("disabled").catch(() => null);
-  const ariaDisabled = await nextButton.getAttribute("aria-disabled").catch(() => null);
-  const isEnabled = await nextButton.isEnabled().catch(() => true);
-  const disabled =
-    disabledAttr != null ||
-    ariaDisabled === "true" ||
-    ariaDisabled === "disabled" ||
-    !isEnabled;
-  if (disabled) return { clicked: false, reason: "disabled-next" };
+  const current = nav.locator("[aria-current], [aria-current=\"page\"]").first();
+  const nextFromCurrent = current.locator("xpath=following::a[1] | xpath=following::button[1]").first();
+  const relNext = page.locator("a[rel='next'], button[rel='next']").first();
 
-  await nextButton.click({ timeout: 5000 }).catch(() => {});
-  return { clicked: true, reason: "clicked" };
+  const candidates = [
+    { locator: numberTarget, reason: "numeric" },
+    { locator: nextFromCurrent, reason: "relative-next" },
+    { locator: relNext, reason: "rel-next" },
+  ];
+
+  for (const candidate of candidates) {
+    const visible = await candidate.locator.isVisible().catch(() => false);
+    if (!visible) continue;
+    await candidate.locator.scrollIntoViewIfNeeded().catch(() => {});
+    const disabledAttr = await candidate.locator.getAttribute("disabled").catch(() => null);
+    const ariaDisabled = await candidate.locator.getAttribute("aria-disabled").catch(() => null);
+    const isEnabled = await candidate.locator.isEnabled().catch(() => true);
+    const disabled =
+      disabledAttr != null ||
+      ariaDisabled === "true" ||
+      ariaDisabled === "disabled" ||
+      !isEnabled;
+    if (disabled) {
+      return { clicked: false, reason: "disabled-target" };
+    }
+    const clickOk = await candidate.locator.click({ timeout: 5000 }).then(() => true).catch(() => false);
+    if (!clickOk) {
+      await candidate.locator.click({ timeout: 5000, force: true }).catch(() => {});
+    }
+    return { clicked: true, reason: candidate.reason };
+  }
+
+  const navText = await nav.innerText().catch(() => "");
+  if (navText) {
+    console.log(`[PAGINATION] Aucun candidat cliquable. Texte pagination: ${navText}`);
+  }
+  return { clicked: false, reason: "missing-target" };
 }
 
 async function getListingSignature(page) {
@@ -1452,27 +1473,35 @@ async function scrapeCategoryAllPages(page, storeUrl, storeId, {
         break;
       }
       let changed = false;
-      const maxClickRetries = 2;
+      const maxClickRetries = 3;
 
       for (let attempt = 1; attempt <= maxClickRetries; attempt += 1) {
         const signatureBefore = await getListingSignature(page);
-        const { clicked, reason } = await clickPaginationNext(page);
+        const { clicked, reason } = await clickPaginationNext(page, pageNum);
         if (!clicked) {
-          if (reason === "disabled-next" || reason === "missing-next" || reason === "missing-nav") {
-            console.log(`[PAGINATION] Stop page ${pageNum}: bouton "Suivant" absent/désactivé.`);
+          if (reason === "disabled-target" || reason === "missing-target" || reason === "missing-nav") {
+            console.log(`[PAGINATION] Stop page ${pageNum}: cible pagination absente/désactivée.`);
             reachedEnd = true;
+            if (debugDir) {
+              await savePageDebugArtifacts(page, debugDir, {
+                pageNum,
+                label: "pagination-missing-target",
+                responseStatus: lastResponseStatus,
+              });
+            }
           } else {
             clickFailed = true;
           }
           break;
         }
 
+        await page.waitForLoadState("domcontentloaded", { timeout: 30000 }).catch(() => {});
+        await waitProductsStable(page, 60000);
         const signatureChanged = await waitForListingSignatureChange(
           page,
           signatureBefore,
           { timeout: 25000 }
         );
-        await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
         await closeInterferingPopups(page);
         if (signatureChanged) {
           changed = true;
@@ -1485,7 +1514,9 @@ async function scrapeCategoryAllPages(page, storeUrl, storeId, {
       }
 
       if (!changed) {
-        console.warn(`[PAGINATION] Stop page ${pageNum}: signature inchangée après 2 essais.`);
+        console.warn(
+          `[PAGINATION] Stop page ${pageNum}: signature inchangée après ${maxClickRetries} essais.`
+        );
         if (debugDir) {
           await savePageDebugArtifacts(page, debugDir, {
             pageNum,
