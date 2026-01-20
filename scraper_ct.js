@@ -1,18 +1,17 @@
-
-
 // @ts-check
 /**
  * Scraper Canadian Tire - Liquidation (Playwright + enrichissement fiche produit)
  * - Multi-magasins via --store <ID> --city "<Nom>"
  * - Titres/prix robustes (aria-label/title/alt, data-*), scroll "lazy"
  * - Enrichissement depuis la liste uniquement (pas de PDP)
- * - Sorties par magasin: outputs/canadiantire/<store>-<city-slug>/data.json
+ * - Sorties par magasin: outputs/canadiantire/<store>-<city-slug>/{data.json,data.csv}
  */
 import fs from "fs";
 import path from "path";
 import { chromium } from "playwright";
 import fsExtra from "fs-extra";
 import slugify from "slugify";
+import { createObjectCsvWriter } from "csv-writer";
 import minimist from "minimist";
 import {
   buildCtKeysFromText,
@@ -20,22 +19,11 @@ import {
   normalizeCtProductNumber,
 } from "./lib/ctProductKey.js";
 
-const args = minimist(process.argv.slice(2), {
-  string: ["storeId", "storeName", "outBase", "maxPages"],
-  boolean: ["debug", "headful", "downloadImages"],
-  default: { maxPages: "120" },
-});
-
 const buildCtKeysFromAvailability = (availabilityText) =>
   buildCtKeysFromText(availabilityText);
 
 const STORES_PATH = path.join(process.cwd(), "data", "canadian_tire_stores.json");
-let allStores = [];
-if (fs.existsSync(STORES_PATH)) {
-  allStores = JSON.parse(fs.readFileSync(STORES_PATH, "utf8"));
-} else {
-  console.warn(`[SCRAPER] Fichier introuvable: ${STORES_PATH}`);
-}
+const allStores = JSON.parse(fs.readFileSync(STORES_PATH, "utf8"));
 
 const rawShardIndex = process.env.SHARD_INDEX;
 const rawTotalShards = process.env.TOTAL_SHARDS;
@@ -46,33 +34,13 @@ const totalShards = rawTotalShards ? parseInt(rawTotalShards, 10) : 0;
 let stopRequested = false;
 
 let storesToProcess = allStores;
-if (storesToProcess.length === 0) {
-  const fallbackStoreId = args.storeId || args.store || null;
-  if (fallbackStoreId) {
-    storesToProcess = [
-      {
-        storeId: String(fallbackStoreId),
-        storeName: String(args.storeName || args.city || ""),
-      },
-    ];
-    console.log(
-      `[SCRAPER] Fallback local → storeId=${fallbackStoreId} storeName=${args.storeName || args.city || ""}`
-    );
-  } else {
-    throw new Error(
-      `[SCRAPER] Impossible de démarrer sans liste de magasins. Fournir --storeId et --storeName ou ajouter ${STORES_PATH}.`
-    );
-  }
-}
-
-const baseStores = allStores.length ? allStores : storesToProcess;
 
 if (!Number.isFinite(shardIndex) || !Number.isFinite(totalShards) || totalShards <= 0) {
-  console.log("[SHARD] Pas de sharding –", baseStores.length, "magasins.");
-  storesToProcess = baseStores;
+  console.log("[SHARD] Pas de sharding –", allStores.length, "magasins.");
+  storesToProcess = allStores;
 } else {
   // Nombre max de magasins par shard (≈8 si 340 magasins / 43 shards)
-  const maxPerShard = Math.ceil(baseStores.length / totalShards);
+  const maxPerShard = Math.ceil(allStores.length / totalShards);
 
   // Sécurité : on limite à 8 magasins par shard même si totalShards change
   const storesPerShard = Math.min(maxPerShard, 8);
@@ -81,9 +49,9 @@ if (!Number.isFinite(shardIndex) || !Number.isFinite(totalShards) || totalShards
   const zeroBasedIndex = Math.max(0, shardIndex - 1);
 
   const start = zeroBasedIndex * storesPerShard;
-  const end = Math.min(start + storesPerShard, baseStores.length);
+  const end = Math.min(start + storesPerShard, allStores.length);
 
-  storesToProcess = baseStores.slice(start, end);
+  storesToProcess = allStores.slice(start, end);
 
   console.log(
     `[SHARD] Shard ${shardIndex}/${totalShards} – magasins index ${start} à ${end - 1} (total: ${storesToProcess.length})`
@@ -101,7 +69,7 @@ function hasReachedTimeLimit() {
 }
 
 // TASK FOR CODEX:
-// Ensure this scraper always writes JSON to the OUT_BASE passed via CLI,
+// Ensure this scraper always writes JSON/CSV to the OUT_BASE passed via CLI,
 // and that the paths never depend on a previous store.
 //
 // 1) Parse the CLI arguments like this:
@@ -120,10 +88,12 @@ function hasReachedTimeLimit() {
 //      OUT_BASE = path.join("outputs", "canadiantire", `${storeId}-${citySlug}`);
 //    }
 //    const jsonPath = path.join(OUT_BASE, "data.json");
+//    const csvPath = path.join(OUT_BASE, "data.csv");
 //    console.log(`OUT_BASE=${OUT_BASE}`);
 //    console.log(`💾  JSON → ${jsonPath}`);
+//    console.log(`📄  CSV  → ${csvPath}`);
 //
-// 3) When writing files, always use jsonPath above.
+// 3) When writing files, always use jsonPath and csvPath above.
 //    Do NOT hard-code "418-rosemere-qc" or any specific store folder.
 //
 // 4) If there is a git commit step inside this file, make sure the commit message uses:
@@ -133,13 +103,15 @@ function hasReachedTimeLimit() {
 // With these changes, each run of the scraper will correctly write to the folder matching
 // the current store (including 218 St. Eustache), and will not reuse Rosemere's paths.
 
+const args = minimist(process.argv.slice(2), {
+  string: ["storeId", "storeName", "outBase", "maxPages"],
+  boolean: ["debug", "headful", "downloadImages"],
+  default: { maxPages: "120" },
+});
+
 const storeFilter = args.store || args.storeId || null;
 if (storeFilter) {
-  const storeFilterNorm = normalizeStoreId(storeFilter);
-  storesToProcess = storesToProcess.filter((store) => {
-    const candidate = normalizeStoreId(store.storeId);
-    return candidate === storeFilterNorm;
-  });
+  storesToProcess = storesToProcess.filter((store) => String(store.storeId) === String(storeFilter));
   console.log(`[SCRAPER] Filtre CLI – store=${storeFilter} → ${storesToProcess.length} magasin(s).`);
 }
 
@@ -155,11 +127,6 @@ function parseBooleanArg(value, defaultValue = false) {
   return defaultValue;
 }
 
-function normalizeStoreId(value) {
-  if (value == null) return "";
-  return String(value).replace(/^0+/, "");
-}
-
 // ---------- CLI ----------
 const DEFAULT_BASE = "https://www.canadiantire.ca/fr/promotions/liquidation.html";
 
@@ -172,84 +139,16 @@ const INCLUDE_LIQUIDATION_PRICE= parseBooleanArg(args["include-liquidation-price
 const BASE = "https://www.canadiantire.ca";
 
 const SELECTORS = {
-  card: [
-    "li[data-testid='product-grids']",
-    "article:has(a[href*='/p/'])",
-    ".nl-product-card",
-  ].join(", "),
+  card: "li[data-testid='product-grids']",
 };
 
-const CARD_COUNT_SELECTOR = [
-  "[data-testid*='product-card']",
-  "article",
-  ".product-card",
-  "[class*='productCard']",
-  "li[data-testid='product-grids']",
-  ".nl-product-card",
-].join(", ");
-
-const NETWORKIDLE_RACE_TIMEOUT_MS = 6000;
-
-async function waitForNetworkIdleOrTimeout(page, label = "") {
-  const suffix = label ? ` (${label})` : "";
-  console.log(`[AWAIT] ▶ waitForLoadState(networkidle)${suffix}`);
-  try {
-    await Promise.race([
-      page.waitForLoadState("networkidle"),
-      page.waitForTimeout(NETWORKIDLE_RACE_TIMEOUT_MS),
-    ]);
-    console.log(`[AWAIT] ✓ waitForLoadState(networkidle)${suffix}`);
-  } catch (err) {
-    console.warn(
-      `[AWAIT] ✗ waitForLoadState(networkidle)${suffix}: ${err?.message || err}`
-    );
-  }
-}
-
-async function withAwaitLog(label, action) {
-  console.log(`[AWAIT] ▶ ${label}`);
-  try {
-    const result = await action();
-    console.log(`[AWAIT] ✓ ${label}`);
-    return result;
-  } catch (err) {
-    console.warn(`[AWAIT] ✗ ${label}: ${err?.message || err}`);
-    throw err;
-  }
-}
-
-function loggedPromise(label, promise) {
-  console.log(`[AWAIT] ▶ ${label}`);
-  return promise
-    .then((result) => {
-      console.log(`[AWAIT] ✓ ${label}`);
-      return result;
-    })
-    .catch((err) => {
-      console.warn(`[AWAIT] ✗ ${label}: ${err?.message || err}`);
-      throw err;
-    });
-}
-
-function createTimeoutPromise(ms, label = "timeout") {
-  return new Promise((_, reject) => {
-    const timer = setTimeout(() => {
-      const err = new Error(`Timeout after ${ms}ms (${label})`);
-      err.name = "TimeoutError";
-      reject(err);
-    }, ms);
-    timer.unref?.();
-  });
-}
-
-const LOAD_MORE_SELECTORS = [
-  "button:has-text('Charger plus')",
-  "button:has-text('Load more')",
-  "a:has-text('Charger plus')",
-  "a:has-text('Load more')",
-  "[data-testid*='load-more']",
-  "[data-testid*='LoadMore']",
-].join(", ");
+const AUTO_SCROLL_DEFAULTS = {
+  productSelector: SELECTORS.card,
+  maxRounds: 25,
+  stableRoundsToStop: 3,
+  perRoundWaitMs: 800,
+  maxTotalMs: 20000,
+};
 
 const PAGINATION_NAV_SELECTOR = [
   "nav[aria-label*='pagination' i]",
@@ -259,38 +158,9 @@ const PAGINATION_NAV_SELECTOR = [
   "nav[role='navigation']:has([aria-current])",
 ].join(", ");
 
-const PRICE_SELECTORS = {
-  sale: [
-    "span[data-testid='priceTotal']",
-    "[data-testid='sale-price']",
-    ".nl-price--total",
-    ".nl-price__total",
-    ".price__value",
-    ".c-pricing__current",
-  ],
-  regular: [
-    "[data-testid='regular-price']",
-    ".nl-price__was s",
-    ".nl-price--was",
-    ".nl-price__was",
-    "del",
-    "s",
-  ],
-  priceContainer: [
-    "[data-testid='price']",
-    "[data-testid='pricing']",
-    ".nl-price",
-    ".nl-price__container",
-    ".c-pricing",
-    ".price",
-    ".price__value",
-    ".nl-price__text",
-  ],
-};
-
 const SEL = {
   card: "li[data-testid=\"product-grids\"]",
-  price: PRICE_SELECTORS.sale.join(", "),
+  price: "span[data-testid=\"priceTotal\"], .nl-price--total, .price, .c-pricing__current",
   paginationNav: PAGINATION_NAV_SELECTOR,
   currentPage: `${PAGINATION_NAV_SELECTOR} [aria-current], ${PAGINATION_NAV_SELECTOR} [aria-current=\"page\"]`,
 };
@@ -304,7 +174,6 @@ const cleanMoney = (s) => {
 
 async function dismissMedalliaPopup(page) {
   try {
-    console.log("[AWAIT] ▶ closeMedallia: locate buttons");
     const possibleCloseButtons = page.locator(
       [
         '#kampyleInviteContainer button',
@@ -316,21 +185,15 @@ async function dismissMedalliaPopup(page) {
     );
 
     const count = await possibleCloseButtons.count();
-    console.log("[AWAIT] ✓ closeMedallia: locate buttons");
     for (let i = 0; i < count; i++) {
       const btn = possibleCloseButtons.nth(i);
-      console.log(`[AWAIT] ▶ closeMedallia: check visibility (${i + 1}/${count})`);
       if (await btn.isVisible().catch(() => false)) {
-        console.log(`[AWAIT] ✓ closeMedallia: visible (${i + 1}/${count})`);
         console.log('🧹 Medallia: clic sur le bouton de fermeture');
-        console.log("[AWAIT] ▶ closeMedallia: click");
         await btn.click({ timeout: 2000 }).catch(() => {});
-        console.log("[AWAIT] ✓ closeMedallia: click");
         break;
       }
     }
 
-    console.log("[AWAIT] ▶ closeMedallia: remove nodes");
     await page.evaluate(() => {
       const ids = ['MDigitalInvitationWrapper', 'kampyleInviteContainer', 'kampyleInvite'];
       for (const id of ids) {
@@ -349,236 +212,28 @@ async function dismissMedalliaPopup(page) {
         }
       });
     });
-    console.log("[AWAIT] ✓ closeMedallia: remove nodes");
   } catch (e) {
     console.warn('⚠️ Impossible de fermer le pop-up Medallia:', e);
   }
 }
 
-async function closeCookieBanner(page) {
-  const selectors = [
-    "button:has-text('Accepter')",
-    "button:has-text('Accepter tout')",
-    "button:has-text('Tout accepter')",
-    "button:has-text('Accept')",
-    "button:has-text('Accept all')",
-    "button[aria-label*='accepter' i]",
-    "button[aria-label*='accept' i]",
-  ];
-  for (const sel of selectors) {
-    try {
-      const loc = page.locator(sel).first();
-      console.log(`[AWAIT] ▶ closeCookieBanner: check ${sel}`);
-      if (await loc.isVisible().catch(() => false)) {
-        console.log(`[AWAIT] ✓ closeCookieBanner: visible ${sel}`);
-        console.log("[AWAIT] ▶ closeCookieBanner: click");
-        await loc.click({ timeout: 2000 }).catch(() => {});
-        console.log("[AWAIT] ✓ closeCookieBanner: click");
-        console.log("[AWAIT] ▶ closeCookieBanner: wait 300ms");
-        await page.waitForTimeout(300);
-        console.log("[AWAIT] ✓ closeCookieBanner: wait 300ms");
-        break;
-      }
-    } catch {}
-  }
-}
-
-async function closeInterferingPopups(page) {
-  console.log("[AWAIT] ▶ closeInterferingPopups");
-  await Promise.allSettled([
-    dismissMedalliaPopup(page),
-    closeCookieBanner(page),
-    maybeCloseStoreModal(page),
-  ]);
-  console.log("[AWAIT] ✓ closeInterferingPopups");
-}
-
-function hasPageParam(urlStr, pageNum) {
+async function waitProductsStable(page, timeout = 15000) {
   try {
-    const url = new URL(urlStr, BASE);
-    return url.searchParams.get("page") === String(pageNum);
-  } catch {
-    return false;
-  }
-}
+    // On attend que les produits soient présents dans le DOM (moins strict que "visible")
+    await page.waitForSelector('li[data-testid="product-grids"]', {
+      state: 'attached',
+      timeout,
+    });
 
-async function logNavigationDebug(page, { pageNum, responseStatus } = {}) {
-  const finalUrl = page.url();
-  const documentUrl = await page.evaluate(() => document.location.href).catch(() => null);
-  console.log(`[NAV] Final URL after goto: ${finalUrl}`);
-  console.log(`[NAV] document.location.href: ${documentUrl ?? "n/a"}`);
-  if (responseStatus != null) {
-    console.log(`[NAV] HTTP status: ${responseStatus}`);
-  }
-  const hasParam = hasPageParam(finalUrl, pageNum);
-  console.log(`[NAV] page param present: ${hasParam}`);
-  return { finalUrl, documentUrl, hasParam };
-}
+    // Petit délai pour laisser le layout se stabiliser
+    await page.waitForTimeout(300);
 
-async function savePageDebugArtifacts(page, debugDir, { pageNum, label, responseStatus } = {}) {
-  if (!debugDir) return;
-  await fsExtra.ensureDir(debugDir);
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const baseName = `page-${pageNum}-${label || "debug"}-${timestamp}`;
-  const screenshotPath = path.join(debugDir, `${baseName}.png`);
-  const htmlPath = path.join(debugDir, `${baseName}.html`);
-  const logPath = path.join(debugDir, `${baseName}.log`);
-
-  const finalUrl = page.url();
-  const hasPage = hasPageParam(finalUrl, pageNum);
-  const documentUrl = await page.evaluate(() => document.location.href).catch(() => null);
-  const logPayload = [
-    `pageNum=${pageNum}`,
-    `label=${label || "debug"}`,
-    `url=${finalUrl}`,
-    `documentUrl=${documentUrl ?? "n/a"}`,
-    `hasPageParam=${hasPage}`,
-    `status=${responseStatus ?? "n/a"}`,
-  ].join("\n");
-
-  await Promise.all([
-    page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {}),
-    page.content().then((content) => fsExtra.writeFile(htmlPath, content)).catch(() => {}),
-    fsExtra.writeFile(logPath, logPayload).catch(() => {}),
-  ]);
-}
-
-async function savePagePriceDebugArtifacts(page, debugDir, pageNum) {
-  if (!debugDir) return;
-  await fsExtra.ensureDir(debugDir);
-  const baseName = `page${pageNum}-no-prices`;
-  const screenshotPath = path.join(debugDir, `${baseName}.png`);
-  const htmlPath = path.join(debugDir, `${baseName}.html`);
-  const urlPath = path.join(debugDir, `${baseName}.url.txt`);
-  const finalUrl = page.url();
-
-  await Promise.all([
-    page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {}),
-    page.content().then((content) => fsExtra.writeFile(htmlPath, content)).catch(() => {}),
-    fsExtra.writeFile(urlPath, finalUrl).catch(() => {}),
-  ]);
-}
-
-async function waitProductsStableWithRetries(page, {
-  timeout = 60000,
-  retries = 2,
-  pageNum = 1,
-  debugDir,
-  responseStatus,
-} = {}) {
-  for (let attempt = 1; attempt <= retries + 1; attempt += 1) {
-    const ok = await waitProductsStable(page, timeout);
-    if (ok) return true;
-    console.warn(`[PAGINATION] Produits non stables (tentative ${attempt}/${retries + 1}).`);
-    if (attempt <= retries) {
-      await withAwaitLog("waitProductsStableWithRetries wait 2000ms", () =>
-        page.waitForTimeout(2000)
-      );
-      await withAwaitLog("waitProductsStableWithRetries closeInterferingPopups", () =>
-        closeInterferingPopups(page)
-      );
-    } else if (debugDir) {
-      await savePageDebugArtifacts(page, debugDir, {
-        pageNum,
-        label: "wait-products-failed",
-        responseStatus,
-      });
-    }
-  }
-  return false;
-}
-async function waitProductsStable(page, timeout = 60000) {
-  try {
-    await withAwaitLog(
-      `waitForSelector cards attached (timeout=${timeout})`,
-      () =>
-        page.waitForSelector(SELECTORS.card, {
-          state: "attached",
-          timeout,
-        })
-    );
-
-    await withAwaitLog("waitForTimeout 300ms (products stable)", () =>
-      page.waitForTimeout(300)
-    );
     return true;
   } catch (err) {
     console.warn(
       `[waitProductsStable] Impossible de stabiliser les produits : ${err.message}`
     );
     return false;
-  }
-}
-
-async function waitForRealCards(page, { timeout = 60000, minRealCards = 5 } = {}) {
-  const checkPlaceholder = async () => {
-    return page.evaluate((cardSelector) => {
-      const cards = Array.from(document.querySelectorAll(cardSelector));
-      const cardsDetected = cards.length;
-      const realCards = cards.filter((card) => {
-        const linkEl = card.querySelector("a[href*='/p/'], a[href*='/product/'], a[href*='/produit/']");
-        const href = linkEl ? linkEl.getAttribute("href") || "" : "";
-        const sku =
-          card.getAttribute("data-sku") ||
-          card.getAttribute("data-product-id") ||
-          card.getAttribute("data-productid") ||
-          "";
-        return Boolean(href) || Boolean(sku);
-      });
-      return { cardsDetected, realCards: realCards.length };
-    }, SELECTORS.card);
-  };
-
-  let placeholderReloaded = false;
-  const start = Date.now();
-
-  while (Date.now() - start < timeout) {
-    const { cardsDetected, realCards } = await checkPlaceholder();
-    if (realCards >= minRealCards) return true;
-
-    if (cardsDetected <= 2 && realCards === 0) {
-      if (!placeholderReloaded) {
-        placeholderReloaded = true;
-        console.warn("[waitForRealCards] Placeholder détecté → reload unique.");
-        await withAwaitLog("reload page (waitForRealCards placeholder)", () =>
-          page.reload({ waitUntil: "domcontentloaded" }).catch(() => {})
-        );
-        await waitForNetworkIdleOrTimeout(page, "after reload placeholder (waitForRealCards)");
-        continue;
-      }
-      console.warn("[waitForRealCards] Placeholder persistant, arrêt propre.");
-      return false;
-    }
-
-    await page.waitForTimeout(800);
-  }
-
-  console.warn("[waitForRealCards] Timeout/erreur: seuil non atteint.");
-  return false;
-}
-
-async function getRealCardStats(page) {
-  try {
-    return await page.evaluate((cardSelector) => {
-      const cards = Array.from(document.querySelectorAll(cardSelector));
-      const realCards = cards.filter((card) => {
-        const linkEl = card.querySelector(
-          "a[href*='/p/'], a[href*='/product/'], a[href*='/produit/']"
-        );
-        const href = linkEl ? linkEl.getAttribute("href") || "" : "";
-        const dataSku =
-          card.getAttribute("data-sku") ||
-          card.getAttribute("data-product-sku") ||
-          "";
-        return Boolean(href) || Boolean(dataSku?.trim());
-      });
-      return {
-        cardsDetected: cards.length,
-        realCards: realCards.length,
-      };
-    }, SELECTORS.card);
-  } catch {
-    return { cardsDetected: 0, realCards: 0 };
   }
 }
 
@@ -699,18 +354,12 @@ async function extractFromCard(card) {
 
 async function scrapeListing(page, { skipGuards = false } = {}) {
   if (!skipGuards) {
-    await withAwaitLog("waitForSelector cards (scrapeListing)", () =>
-      page.waitForSelector(SELECTORS.card, { timeout: 60000 })
-    );
-    await withAwaitLog("waitForSelector sale price (scrapeListing)", () =>
-      page.waitForSelector(PRICE_SELECTORS.sale.join(", "), { timeout: 20000 })
-    ).catch(() => {});
+    await page.waitForSelector(SELECTORS.card, { timeout: 45000 });
+    await page.waitForSelector("span[data-testid='priceTotal'], .nl-price--total", { timeout: 20000 }).catch(() => {});
   } else {
     const hasCards = await page.locator(SELECTORS.card).count();
     if (!hasCards) {
-      await withAwaitLog("waitForSelector cards (scrapeListing skipGuards)", () =>
-        page.waitForSelector(SELECTORS.card, { timeout: 60000 })
-      );
+      await page.waitForSelector(SELECTORS.card, { timeout: 20000 });
     }
   }
 
@@ -718,7 +367,7 @@ async function scrapeListing(page, { skipGuards = false } = {}) {
   try {
     const items =
       (await cardsLocator.evaluateAll((nodes, { base }) => {
-        const cleanMoney = (s) => {
+      const cleanMoney = (s) => {
         if (!s) return null;
         s = s.replace(/\u00a0/g, " ").trim();
         const m = s.match(/(\d[\d\s.,]*)(?:\s*\$)?/);
@@ -729,15 +378,6 @@ async function scrapeListing(page, { skipGuards = false } = {}) {
         if (!node) return null;
         const t = node.textContent;
         return t ? t.trim() : null;
-      };
-
-      const textFromSelectorList = (root, selectors) => {
-        for (const sel of selectors) {
-          const node = root.querySelector(sel);
-          const text = textFromEl(node);
-          if (text) return text;
-        }
-        return null;
       };
 
       const extractSkuData = (anchor) => {
@@ -772,63 +412,12 @@ async function scrapeListing(page, { skipGuards = false } = {}) {
       };
 
       return nodes.map((el) => {
-      const titleEl = el.querySelector("[id^='title__promolisting-'], .nl-product-card__title");
-      const title = textFromEl(titleEl);
-      const pricingRoot =
-        el.querySelector(
-          "[data-testid='price'], [data-testid='pricing'], .nl-price, .nl-price__container, .c-pricing, .price, .price__value, .nl-price__text"
-        ) || el;
+        const titleEl = el.querySelector("[id^='title__promolisting-'], .nl-product-card__title");
+        const title = textFromEl(titleEl);
 
-      const priceSaleRaw = textFromSelectorList(pricingRoot, [
-        "span[data-testid='priceTotal']",
-        "[data-testid='sale-price']",
-        ".nl-price--total",
-        ".nl-price__total",
-        ".c-pricing__current",
-        ".price__value",
-      ]);
-
-      const wasSelectors = [
-        "[data-testid='regular-price']",
-        ".nl-price__was s",
-        ".nl-price--was",
-        ".nl-price__was",
-        "del",
-        "s",
-      ];
-      let priceWasRaw = textFromSelectorList(pricingRoot, wasSelectors);
-
-      const pricingLabel =
-        pricingRoot.getAttribute("aria-label") ||
-        pricingRoot.getAttribute("title") ||
-        null;
-      if (!priceWasRaw && pricingLabel) {
-        const wasMatch = pricingLabel.match(/(était|was|regular)[^0-9]*([\d\s.,]+)/i);
-        if (wasMatch) {
-          priceWasRaw = wasMatch[2];
-        }
-      }
-
-      let priceSaleLabel = null;
-      if (!priceSaleRaw && pricingLabel) {
-        const saleMatch = pricingLabel.match(/(maintenant|now|sale|price)[^0-9]*([\d\s.,]+)/i);
-        if (saleMatch) {
-          priceSaleLabel = saleMatch[2];
-        }
-      }
-
-      if (!priceWasRaw) {
-        const datasetValues = Object.values(pricingRoot.dataset || {}).join(" ");
-        if (datasetValues) {
-          const wasMatch = datasetValues.match(/(était|was|regular)[^0-9]*([\d\s.,]+)/i);
-          if (wasMatch) {
-            priceWasRaw = wasMatch[2];
-          }
-        }
-      }
-
-      const priceSaleFinalRaw = priceSaleRaw || priceSaleLabel || null;
-        const price_sale = cleanMoney(priceSaleFinalRaw);
+        const priceSaleRaw = textFromEl(el.querySelector("span[data-testid='priceTotal'], .nl-price--total"));
+        const priceWasRaw = textFromEl(el.querySelector(".nl-price__was s, .nl-price__was, .nl-price--was, .nl-price__change s"));
+        const price_sale = cleanMoney(priceSaleRaw);
         const price_original = cleanMoney(priceWasRaw);
 
         const imgEl = el.querySelector(".nl-product-card__image-wrap img");
@@ -867,7 +456,7 @@ async function scrapeListing(page, { skipGuards = false } = {}) {
         return {
           name: title || null,
           price_sale,
-          price_sale_raw: priceSaleFinalRaw || null,
+          price_sale_raw: priceSaleRaw || null,
           price_original,
           price_original_raw: priceWasRaw || null,
           image: image || null,
@@ -886,9 +475,7 @@ async function scrapeListing(page, { skipGuards = false } = {}) {
   } catch (e) {
     console.warn("scrapeListing evaluateAll error:", e?.message || e);
     if (!skipGuards) {
-      await withAwaitLog("waitForSelector cards (scrapeListing fallback)", () =>
-        page.waitForSelector(SELECTORS.card, { timeout: 20000 })
-      ).catch(() => {});
+      await page.waitForSelector(SELECTORS.card, { timeout: 20000 }).catch(() => {});
     }
     const cards = page.locator(SELECTORS.card);
     const n = await cards.count();
@@ -936,133 +523,15 @@ function normalizeProductUrlForDedup(rawUrl) {
   }
 }
 
-async function clickPaginationNext(page, targetPage) {
-  const nav = page.locator(SEL.paginationNav).first();
-  const navVisible = await nav.isVisible().catch(() => false);
-  if (!navVisible) return { clicked: false, reason: "missing-nav" };
-
-  const targetLabel = targetPage ? String(targetPage) : "2";
-  const numberTarget = nav
-    .locator(
-      [
-        `a[aria-label*='${targetLabel}']`,
-        `button:has-text('${targetLabel}')`,
-        `a:has-text('${targetLabel}')`,
-      ].join(", ")
-    )
-    .first();
-
-  const current = nav.locator("[aria-current], [aria-current=\"page\"]").first();
-  const nextFromCurrent = current.locator("xpath=following::a[1] | xpath=following::button[1]").first();
-  const relNext = page.locator("a[rel='next'], button[rel='next']").first();
-  const textNext = nav.locator("a:has-text('Suivant'), button:has-text('Suivant'), a:has-text('Next'), button:has-text('Next')").first();
-
-  const candidates = [
-    { locator: numberTarget, reason: "numeric" },
-    { locator: textNext, reason: "text-next" },
-    { locator: nextFromCurrent, reason: "relative-next" },
-    { locator: relNext, reason: "rel-next" },
-  ];
-
-  for (const candidate of candidates) {
-    const visible = await candidate.locator.isVisible().catch(() => false);
-    if (!visible) continue;
-    await candidate.locator.scrollIntoViewIfNeeded().catch(() => {});
-    const disabledAttr = await candidate.locator.getAttribute("disabled").catch(() => null);
-    const ariaDisabled = await candidate.locator.getAttribute("aria-disabled").catch(() => null);
-    const isEnabled = await candidate.locator.isEnabled().catch(() => true);
-    const disabled =
-      disabledAttr != null ||
-      ariaDisabled === "true" ||
-      ariaDisabled === "disabled" ||
-      !isEnabled;
-    if (disabled) {
-      return { clicked: false, reason: "disabled-target" };
-    }
-    const clickOk = await candidate.locator.click({ timeout: 5000 }).then(() => true).catch(() => false);
-    if (!clickOk) {
-      await candidate.locator.click({ timeout: 5000, force: true }).catch(() => {});
-    }
-    return { clicked: true, reason: candidate.reason };
-  }
-
-  const navText = await nav.innerText().catch(() => "");
-  if (navText) {
-    console.log(`[PAGINATION] Aucun candidat cliquable. Texte pagination: ${navText}`);
-  }
-  return { clicked: false, reason: "missing-target" };
-}
-
-async function getListingSignature(page) {
+function withPageParam(urlStr, pageNum) {
   try {
-    return await page.evaluate((cardSelector) => {
-      const firstCard = document.querySelector(cardSelector);
-      const count = document.querySelectorAll(cardSelector).length;
-      const titleEl = firstCard
-        ? firstCard.querySelector("[id^='title__promolisting-'], .nl-product-card__title")
-        : null;
-      const title = titleEl ? titleEl.textContent?.trim() : "";
-      const linkEl = firstCard ? firstCard.querySelector("a[href]") : null;
-      const href = linkEl ? linkEl.getAttribute("href") || "" : "";
-      return [count, title || "", href || ""].join("|");
-    }, SELECTORS.card);
+    const url = new URL(urlStr, BASE);
+    url.searchParams.set("page", String(pageNum));
+    return url.toString();
   } catch {
-    return "";
+    const sep = urlStr.includes("?") ? "&" : "?";
+    return `${urlStr}${sep}page=${pageNum}`;
   }
-}
-
-async function waitForListingSignatureChange(page, previousSignature, { timeout = 20000 } = {}) {
-  try {
-    await withAwaitLog(
-      `waitForFunction listing signature change (timeout=${timeout})`,
-      () =>
-        page.waitForFunction(
-          (cardSelector, prevSignature) => {
-            const firstCard = document.querySelector(cardSelector);
-            const count = document.querySelectorAll(cardSelector).length;
-            const titleEl = firstCard
-              ? firstCard.querySelector("[id^='title__promolisting-'], .nl-product-card__title")
-              : null;
-            const title = titleEl ? titleEl.textContent?.trim() : "";
-            const linkEl = firstCard ? firstCard.querySelector("a[href]") : null;
-            const href = linkEl ? linkEl.getAttribute("href") || "" : "";
-            const signature = [count, title || "", href || ""].join("|");
-            return signature && signature !== prevSignature;
-          },
-          SELECTORS.card,
-          previousSignature || "",
-          { timeout }
-        )
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function gotoWithRetries(page, url, {
-  attempts = 3,
-  waitUntil = "domcontentloaded",
-  networkIdleTimeout = 30000,
-} = {}) {
-  let lastError = null;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    try {
-      const response = await withAwaitLog(
-        `goto ${url} (attempt ${attempt}/${attempts})`,
-        () => page.goto(url, { timeout: 120000, waitUntil })
-      );
-      await waitForNetworkIdleOrTimeout(page, `after goto ${url}`);
-      await withAwaitLog("closeInterferingPopups after goto", () => closeInterferingPopups(page));
-      return response || null;
-    } catch (err) {
-      lastError = err;
-      console.warn(`[NAV] goto failed (${attempt}/${attempts}) → ${err?.message || err}`);
-      await withAwaitLog("goto retry wait 2000ms", () => page.waitForTimeout(2000));
-    }
-  }
-  if (lastError) throw lastError;
-  return null;
 }
 
 function buildStableDedupKey(record) {
@@ -1136,7 +605,21 @@ function resolveOutputPaths(storeId, storeName = "") {
     OUT_BASE = path.join("outputs", "canadiantire", `${storeIdStr}-${citySlug}`);
   }
   const jsonPath = path.join(OUT_BASE, "data.json");
-  return { OUT_BASE, jsonPath };
+  const csvPath = path.join(OUT_BASE, "data.csv");
+  return { OUT_BASE, jsonPath, csvPath };
+}
+
+function buildCategoryUrlForStore(categoryUrl, storeId) {
+  if (!categoryUrl) return DEFAULT_BASE;
+  try {
+    const url = new URL(categoryUrl, BASE);
+    if (storeId) {
+      url.searchParams.set("store", storeId);
+    }
+    return url.toString();
+  } catch {
+    return categoryUrl;
+  }
 }
 
 function normalizeAvailabilityInfo(rawAvailability, stockQtyInput = null) {
@@ -1327,44 +810,30 @@ function createRecordFromCard(card, pageIsClearance, storeContext = { storeId: n
 }
 
 async function lazyWarmup(page) {
-  console.log("[AWAIT] ▶ lazyWarmup start");
   // scroll rapide pour déclencher lazy render des prix/images sans multiplier les pauses
-  await withAwaitLog("lazyWarmup page.evaluate scroll", () =>
-    page.evaluate(async () => {
-      const viewport = window.innerHeight || 800;
-      const maxScroll = document.body.scrollHeight || viewport;
-      if (maxScroll <= viewport * 1.15) {
-        window.scrollTo(0, 0);
-        return;
-      }
-      const step = Math.max(260, Math.floor(viewport * 1.3));
-      const delay = 35;
-      for (let y = 0; y < maxScroll; y += step) {
-        window.scrollTo(0, y);
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
+  await page.evaluate(async () => {
+    const viewport = window.innerHeight || 800;
+    const maxScroll = document.body.scrollHeight || viewport;
+    if (maxScroll <= viewport * 1.15) {
       window.scrollTo(0, 0);
-    })
-  );
-  await withAwaitLog("lazyWarmup waitForTimeout 40ms", () => page.waitForTimeout(40));
-  await withAwaitLog("lazyWarmup race price selector", () =>
-    Promise.race([
-      page.waitForSelector(
-        [
-          "[data-testid='sale-price']",
-          "[data-testid='regular-price']",
-          "span[data-testid='priceTotal']",
-          ".nl-price--total",
-          ".nl-price__total",
-          ".price__value",
-          ".c-pricing__current",
-        ].join(", "),
-        { timeout: 4500 }
-      ),
-      page.waitForTimeout(650),
-    ])
-  ).catch(()=>{});
-  console.log("[AWAIT] ✓ lazyWarmup end");
+      return;
+    }
+    const step = Math.max(260, Math.floor(viewport * 1.3));
+    const delay = 35;
+    for (let y = 0; y < maxScroll; y += step) {
+      window.scrollTo(0, y);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+    window.scrollTo(0, 0);
+  });
+  await page.waitForTimeout(40);
+  await Promise.race([
+    page.waitForSelector(
+      "[data-testid='sale-price'], [data-testid='regular-price'], span[data-testid='priceTotal'], .nl-price--total, .price, .price__value",
+      { timeout: 4500 }
+    ),
+    page.waitForTimeout(650),
+  ]).catch(()=>{});
 }
 
 async function maybeCloseStoreModal(page) {
@@ -1380,11 +849,73 @@ async function maybeCloseStoreModal(page) {
     try {
       const loc = page.locator(sel).first();
       if (await loc.isVisible().catch(()=>false)) {
-        await withAwaitLog(`maybeCloseStoreModal click ${sel}`, () => loc.click().catch(()=>{}));
-        await withAwaitLog("maybeCloseStoreModal wait 500ms", () => page.waitForTimeout(500));
+        await loc.click().catch(()=>{});
+        await page.waitForTimeout(500);
       }
     } catch {}
   }
+}
+
+let cachedCategoryUrls = null;
+let categoryFetchPromise = null;
+
+async function fetchCategoryUrls() {
+  const browser = await chromium.launch({ headless: HEADLESS, args: ["--disable-dev-shm-usage"] });
+  const context = await browser.newContext({ locale: "fr-CA" });
+  context.setDefaultTimeout(0);
+  const page = await context.newPage();
+  page.setDefaultNavigationTimeout(0);
+
+  await page.route("**/*medallia*", (route) => route.abort());
+  await page.route("**/resources.digital-cloud.medallia.ca/**", (route) => route.abort());
+
+  try {
+    await page.goto(DEFAULT_BASE, { timeout: 120000, waitUntil: "domcontentloaded" });
+    await maybeCloseStoreModal(page);
+
+    const links = await page
+      .locator("a[href*='/fr/promotions/liquidation/']")
+      .evaluateAll((anchors, base) => {
+        const urls = anchors
+          .map((anchor) => anchor.getAttribute("href"))
+          .filter(Boolean)
+          .map((href) => {
+            try {
+              const u = new URL(href, base);
+              u.hash = "";
+              return u.toString();
+            } catch {
+              return null;
+            }
+          })
+          .filter(Boolean)
+          .filter((href) => href.includes("/fr/promotions/liquidation/"));
+
+        return Array.from(new Set(urls));
+      }, BASE);
+
+    console.log(`[SCRAPER] ${links.length} catégorie(s) détectée(s) sur la page de liquidation.`);
+    return links;
+  } catch (error) {
+    console.error("[SCRAPER] Impossible de récupérer les catégories de liquidation :", error);
+    return [];
+  } finally {
+    await browser.close();
+  }
+}
+
+async function getCategoryUrls() {
+  if (cachedCategoryUrls) return cachedCategoryUrls;
+
+  if (!categoryFetchPromise) {
+    categoryFetchPromise = fetchCategoryUrls().catch((error) => {
+      console.error("[SCRAPER] Échec lors de la récupération des catégories :", error);
+      return [];
+    });
+  }
+
+  cachedCategoryUrls = await categoryFetchPromise;
+  return cachedCategoryUrls;
 }
 
 const STORE_SELECTORS = {
@@ -1410,28 +941,18 @@ const STORE_SELECTORS = {
 async function openStoreSelector(page) {
   const openButton = page.locator(STORE_SELECTORS.openButtons).first();
   if (await openButton.isVisible().catch(() => false)) {
-    await withAwaitLog("openStoreSelector click", () =>
-      openButton.click({ timeout: 5000 }).catch(() => {})
-    );
+    await openButton.click({ timeout: 5000 }).catch(() => {});
   }
-  await withAwaitLog("openStoreSelector wait for storeCards visible", () =>
-    page.locator(STORE_SELECTORS.storeCards).first().waitFor({ state: "visible", timeout: 10000 })
-  ).catch(() => {});
+  await page.locator(STORE_SELECTORS.storeCards).first().waitFor({ state: "visible", timeout: 10000 }).catch(() => {});
 }
 
 async function closeStoreSelector(page) {
   const closeButton = page.locator(STORE_SELECTORS.closeButtons).first();
   if (await closeButton.isVisible().catch(() => false)) {
-    await withAwaitLog("closeStoreSelector click", () =>
-      closeButton.click({ timeout: 3000 }).catch(() => {})
-    );
+    await closeButton.click({ timeout: 3000 }).catch(() => {});
   }
-  await withAwaitLog("closeStoreSelector press Escape", () =>
-    page.keyboard.press("Escape").catch(() => {})
-  );
-  await withAwaitLog("closeStoreSelector wait for storeCards hidden", () =>
-    page.locator(STORE_SELECTORS.storeCards).first().waitFor({ state: "hidden", timeout: 5000 })
-  ).catch(() => {});
+  await page.keyboard.press("Escape").catch(() => {});
+  await page.locator(STORE_SELECTORS.storeCards).first().waitFor({ state: "hidden", timeout: 5000 }).catch(() => {});
 }
 
 async function clickStoreCard(page, storeId) {
@@ -1449,7 +970,7 @@ async function clickStoreCard(page, storeId) {
 }
 
 async function waitForStoreApplied(page, storeId, storeName) {
-  const expectedStoreId = normalizeStoreId(storeId);
+  const expectedStoreId = String(storeId);
   const currentUrl = page.url();
   try {
     const parsed = new URL(currentUrl);
@@ -1461,37 +982,31 @@ async function waitForStoreApplied(page, storeId, storeName) {
   const checks = [];
 
   checks.push(
-    loggedPromise(
-      "waitForFunction store param",
-      page.waitForFunction(
-        (id) => {
-          try {
-            const url = new URL(window.location.href);
-            return url.searchParams.get("store") === id;
-          } catch {
-            return false;
-          }
-        },
-        expectedStoreId,
-        { timeout: 15000 }
-      )
+    page.waitForFunction(
+      (id) => {
+        try {
+          const url = new URL(window.location.href);
+          return url.searchParams.get("store") === id;
+        } catch {
+          return false;
+        }
+      },
+      expectedStoreId,
+      { timeout: 15000 }
     )
   );
 
   checks.push(
-    loggedPromise(
-      "waitForResponse store param",
-      page.waitForResponse(
-        (response) => {
-          const url = response.url();
-          if (url.includes(`store=${expectedStoreId}`) || url.includes(`storeId=${expectedStoreId}`)) {
-            return true;
-          }
-          const postData = response.request().postData();
-          return postData ? postData.includes(expectedStoreId) : false;
-        },
-        { timeout: 15000 }
-      )
+    page.waitForResponse(
+      (response) => {
+        const url = response.url();
+        if (url.includes(`store=${expectedStoreId}`) || url.includes(`storeId=${expectedStoreId}`)) {
+          return true;
+        }
+        const postData = response.request().postData();
+        return postData ? postData.includes(expectedStoreId) : false;
+      },
+      { timeout: 15000 }
     )
   );
 
@@ -1499,10 +1014,7 @@ async function waitForStoreApplied(page, storeId, storeName) {
     const normalizedStoreName = String(storeName).trim();
     if (normalizedStoreName) {
       checks.push(
-        loggedPromise(
-          `waitFor store name visible (${normalizedStoreName})`,
-          page.locator(`text=${normalizedStoreName}`).first().waitFor({ state: "visible", timeout: 15000 })
-        )
+        page.locator(`text=${normalizedStoreName}`).first().waitFor({ state: "visible", timeout: 15000 })
       );
     }
   }
@@ -1557,7 +1069,7 @@ async function saveStoreDebugArtifacts(page, storeId, debugDir) {
 }
 
 async function selectStore(page, { storeId, storeName, debugDir } = {}) {
-  const normalizedStoreId = normalizeStoreId(storeId);
+  const normalizedStoreId = storeId != null ? String(storeId) : "";
   if (!normalizedStoreId) return false;
 
   const maxRetries = 2;
@@ -1572,18 +1084,11 @@ async function selectStore(page, { storeId, storeName, debugDir } = {}) {
 
     const confirmButton = page.locator(STORE_SELECTORS.confirmButtons).first();
     if (await confirmButton.isVisible().catch(() => false)) {
-      await withAwaitLog("selectStore confirm click", () =>
-        confirmButton.click({ timeout: 5000 }).catch(() => {})
-      );
-      await withAwaitLog("selectStore confirm hidden", () =>
-        confirmButton.waitFor({ state: "hidden", timeout: 10000 }).catch(() => {})
-      );
+      await confirmButton.click({ timeout: 5000 }).catch(() => {});
+      await confirmButton.waitFor({ state: "hidden", timeout: 10000 }).catch(() => {});
     }
 
-    const validated = await withAwaitLog(
-      `waitForStoreApplied store=${normalizedStoreId}`,
-      () => waitForStoreApplied(page, normalizedStoreId, storeName)
-    );
+    const validated = await waitForStoreApplied(page, normalizedStoreId, storeName);
     if (validated) {
       console.log(`Validated store ${normalizedStoreId}`);
       return true;
@@ -1591,8 +1096,8 @@ async function selectStore(page, { storeId, storeName, debugDir } = {}) {
 
     if (attempt <= maxRetries) {
       console.warn(`Validation failed → retry ${attempt}/${maxRetries} ...`);
-      await withAwaitLog("closeStoreSelector retry", () => closeStoreSelector(page));
-      await waitForNetworkIdleOrTimeout(page, "after closeStoreSelector");
+      await closeStoreSelector(page);
+      await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
     }
   }
 
@@ -1601,400 +1106,174 @@ async function selectStore(page, { storeId, storeName, debugDir } = {}) {
   return false;
 }
 
-async function scrollUntilCardsStop(page) {
-  const start = Date.now();
-  const maxTotalMs = 3 * 60 * 1000;
-  const stableRoundsToStop = 3;
-  let stable = 0;
-  let lastCount = await page.locator(CARD_COUNT_SELECTOR).count();
-
-  console.log(`[SCROLL] start cards=${lastCount}`);
-
-  for (let round = 1; ; round += 1) {
-    if (Date.now() - start > maxTotalMs) {
-      console.log("[SCROLL] timeout global atteint (3 minutes).");
-      break;
-    }
-
-    await page.mouse.wheel(0, 1600);
-    await page.evaluate(() => window.scrollBy(0, 1200));
-
-    const waitMs = 600 + Math.floor(Math.random() * 301);
-    await page.waitForTimeout(waitMs);
-
-    const count = await page.locator(CARD_COUNT_SELECTOR).count();
-    if (count > lastCount) {
-      lastCount = count;
-      stable = 0;
-    } else {
-      stable += 1;
-    }
-
-    console.log(`[SCROLL] cards=${count} stable=${stable}/${stableRoundsToStop}`);
-    if (stable >= stableRoundsToStop) break;
-  }
-}
-
-async function clickLoadMoreUntilNoGrowth(page, {
-  cardSelector = SELECTORS.card,
-  maxClicks = 25,
-  perClickWaitMs = 1200,
+async function autoScrollLoadAllProducts(page, {
+  productSelector = 'a[href*="/pdp/"]',
+  maxRounds = 25,
   stableRoundsToStop = 3,
-  maxTotalMs = 300000,
+  perRoundWaitMs = 800,
+  maxTotalMs = 20000,
 } = {}) {
   const start = Date.now();
-  let previousCount = await page.locator(cardSelector).count();
-  let clicks = 0;
-  let stableRounds = 0;
 
-  for (let attempt = 1; attempt <= maxClicks; attempt += 1) {
+  let lastCount = await page.locator(productSelector).count();
+  let lastHeight = await page.evaluate(() => document.body.scrollHeight);
+  console.log(`[PAGINATION] Auto-scroll: démarrage avec ${lastCount} produits.`);
+
+  let stable = 0;
+
+  for (let round = 1; round <= maxRounds; round++) {
     if (Date.now() - start > maxTotalMs) {
-      console.log(`[PAGINATION] Charger plus: timeout global (${maxTotalMs}ms).`);
+      console.log(`[PAGINATION] Auto-scroll: timeout global atteint (${maxTotalMs}ms). Stop.`);
       break;
     }
 
-    const loadMoreButton = page.locator(LOAD_MORE_SELECTORS).first();
-    const visible = await loadMoreButton.isVisible().catch(() => false);
-    if (!visible) {
-      console.log("[PAGINATION] Charger plus: bouton absent.");
-      break;
-    }
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.waitForTimeout(perRoundWaitMs);
 
-    await loadMoreButton.scrollIntoViewIfNeeded().catch(() => {});
-    await page.evaluate(() => window.scrollBy(0, window.innerHeight));
+    const count = await page.locator(productSelector).count();
+    const height = await page.evaluate(() => document.body.scrollHeight);
 
-    const clicked = await loadMoreButton
-      .click({ timeout: 5000 })
-      .then(() => true)
-      .catch(() => false);
-    if (!clicked) {
-      await loadMoreButton.click({ timeout: 5000, force: true }).catch(() => {});
-    }
+    const countChanged = count !== lastCount;
+    const heightChanged = height !== lastHeight;
 
-    clicks += 1;
-    await waitForNetworkIdleOrTimeout(page, "after load more");
-    await withAwaitLog("waitForRealCards after load more", () =>
-      waitForRealCards(page, { timeout: 30000, minRealCards: 5 })
-    );
-    await withAwaitLog(`waitForTimeout ${perClickWaitMs}ms after load more`, () =>
-      page.waitForTimeout(perClickWaitMs)
-    );
-
-    const newCount = await page.locator(cardSelector).count();
-    const delta = newCount - previousCount;
-    console.log(
-      `[PAGINATION] Charger plus: ${previousCount} → ${newCount} (Δ${delta}) (click ${clicks})`
-    );
-    if (newCount <= previousCount) {
-      stableRounds += 1;
-      console.log(`[PAGINATION] Charger plus: stable (${stableRounds}/${stableRoundsToStop}).`);
-      if (stableRounds >= stableRoundsToStop) {
+    if (countChanged || heightChanged) {
+      console.log(`[PAGINATION] Round ${round}: produits ${lastCount}→${count}, height ${lastHeight}→${height}`);
+      lastCount = count;
+      lastHeight = height;
+      stable = 0;
+    } else {
+      stable++;
+      console.log(`[PAGINATION] Round ${round}: stable (${stable}/${stableRoundsToStop})`);
+      if (stable >= stableRoundsToStop) {
+        console.log(`[PAGINATION] Auto-scroll: stable, stop.`);
         break;
       }
-    } else {
-      stableRounds = 0;
-      previousCount = newCount;
     }
   }
 
-  return { clicks, finalCount: previousCount };
+  await page.evaluate(() => window.scrollTo(0, 0));
 }
 
-function normalizePaginationBaseUrl(inputUrl) {
-  try {
-    const parsed = new URL(inputUrl, BASE);
-    parsed.searchParams.delete("page");
-    return parsed.toString();
-  } catch {
-    return inputUrl;
-  }
-}
-
-function buildPaginationUrl(baseUrl, pageNum) {
-  try {
-    const parsed = new URL(baseUrl, BASE);
-    parsed.searchParams.set("page", String(pageNum));
-    return parsed.toString();
-  } catch {
-    return baseUrl;
-  }
-}
-
-async function scrapeCategoryAllPages(page, storeUrl, storeId, {
+async function scrapeCategoryAllPages(page, categoryUrlWithStore, storeId, {
   extractPage,
+  autoScrollConfig,
   storeName,
   debugDir,
 } = {}) {
   const items = [];
+  const maxPages = Math.max(1, Number(args.maxPages) || 50);
+  let previousSignature = null;
   let storeInitialized = false;
-  let lastResponseStatus = null;
+  const seen = new Set();
+  let zeroStreak = 0;
+  const ZERO_STREAK_LIMIT = 3;
 
-  const baseUrl = normalizePaginationBaseUrl(storeUrl);
-  console.log("➡️  Go to:", baseUrl);
-  const response = await gotoWithRetries(page, baseUrl, {
-    attempts: 3,
-    waitUntil: "domcontentloaded",
-    networkIdleTimeout: 30000,
-  });
-  lastResponseStatus = response ? response.status() : null;
-  await logNavigationDebug(page, { pageNum: 1, responseStatus: lastResponseStatus });
-
-  const watchdogIntervalMs = 10000;
-  const watchdogTimer = setInterval(() => {
-    void (async () => {
-      try {
-        const url = page.url();
-        const count = await page.locator(SELECTORS.card).count();
-        console.log(`[WATCHDOG] still alive url=${url} cards=${count}`);
-      } catch (err) {
-        console.warn(`[WATCHDOG] still alive check failed: ${err?.message || err}`);
-      }
-    })();
-  }, watchdogIntervalMs);
-
-  try {
-    const pageNum = 1;
+  for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
     if (hasReachedTimeLimit()) {
       console.log(`[PAGINATION] Stop page ${pageNum}: limite de temps atteinte.`);
-      return items;
+      break;
     }
 
-    await (async () => {
-      if (hasReachedTimeLimit()) {
-        console.log(`[PAGINATION] Stop page ${pageNum}: limite de temps atteinte.`);
-        return;
-      }
+    const pageUrl = withPageParam(categoryUrlWithStore, pageNum);
+    console.log("➡️  Go to:", pageUrl);
 
+    let retries = 3;
+    while (retries > 0) {
       try {
-        await Promise.race([
-          (async () => {
-            if (pageNum > 1) {
-              if (reachedEnd || clickFailed) {
-                return;
-              }
-              let changed = false;
-              const maxClickRetries = 3;
-
-              for (let attempt = 1; attempt <= maxClickRetries; attempt += 1) {
-                const signatureBefore = await getListingSignature(page);
-                console.log("[PAGINATION] Scroll bas pour pagination UI.");
-                await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-                await page.waitForTimeout(800);
-                const { clicked, reason } = await clickPaginationNext(page, pageNum);
-                if (!clicked) {
-                  if (reason === "disabled-target" || reason === "missing-target" || reason === "missing-nav") {
-                    console.log(`[PAGINATION] Stop page ${pageNum}: cible pagination absente/désactivée.`);
-                    reachedEnd = true;
-                    if (debugDir) {
-                      await savePageDebugArtifacts(page, debugDir, {
-                        pageNum,
-                        label: "pagination-missing-target",
-                        responseStatus: lastResponseStatus,
-                      });
-                    }
-                  } else {
-                    clickFailed = true;
-                  }
-                  break;
-                }
-
-                await withAwaitLog("waitForLoadState domcontentloaded (pagination click)", () =>
-                  page.waitForLoadState("domcontentloaded", { timeout: 30000 })
-                ).catch(() => {});
-                await withAwaitLog("waitProductsStable (pagination click)", () => waitProductsStable(page, 60000));
-                const signatureChanged = await withAwaitLog(
-                  "waitForListingSignatureChange (pagination click)",
-                  () => waitForListingSignatureChange(page, signatureBefore, { timeout: 25000 })
-                );
-                await withAwaitLog("closeInterferingPopups (pagination click)", () =>
-                  closeInterferingPopups(page)
-                );
-                if (signatureChanged) {
-                  changed = true;
-                  break;
-                }
-                console.warn(
-                  `[PAGINATION] Page ${pageNum}: signature inchangée après clic (${attempt}/${maxClickRetries}).`
-                );
-                await withAwaitLog("pagination click retry wait 1500ms", () => page.waitForTimeout(1500));
-              }
-
-              if (!changed) {
-                console.warn(
-                  `[PAGINATION] Stop page ${pageNum}: signature inchangée après ${maxClickRetries} essais.`
-                );
-                if (debugDir) {
-                  await savePageDebugArtifacts(page, debugDir, {
-                    pageNum,
-                    label: "pagination-signature-stuck",
-                    responseStatus: lastResponseStatus,
-                  });
-                }
-                return;
-              }
-            }
-
-            if (!storeInitialized) {
-              const m = storeUrl.match(/[?&]store=(\d+)/);
-              const storeIdFromUrl = m ? m[1] : null;
-              if (storeIdFromUrl || storeId) {
-                const targetStoreId = storeIdFromUrl || storeId;
-                console.log(
-                  `[STORE] Store déjà défini via l'URL (${targetStoreId}) → aucune sélection UI.`
-                );
-                let validated = await withAwaitLog(
-                  `waitForStoreApplied (url store ${targetStoreId})`,
-                  () => waitForStoreApplied(page, targetStoreId, storeName)
-                );
-                if (!validated) {
-                  console.warn(
-                    `[STORE] Store non confirmé via l'URL (${targetStoreId}).`
-                  );
-                }
-              }
-              storeInitialized = true;
-            }
-
-            const isStable = await withAwaitLog(
-              `waitProductsStableWithRetries page ${pageNum}`,
-              () =>
-                waitProductsStableWithRetries(page, {
-                  timeout: 60000,
-                  retries: 2,
-                  pageNum,
-                  debugDir,
-                  responseStatus: lastResponseStatus,
-                })
-            );
-            if (!isStable) {
-              console.log(`[PAGINATION] Page ${pageNum}: produits non détectés après retries.`);
-              return;
-            }
-
-            const realCardsReady = await withAwaitLog(
-              `waitForRealCards page ${pageNum}`,
-              () => waitForRealCards(page, { timeout: 45000, minRealCards: 5 })
-            );
-          }
-        }
-        storeInitialized = true;
+        await page.goto(pageUrl, { timeout: 120000, waitUntil: "domcontentloaded" });
+        break;
+      } catch (e) {
+        if (--retries === 0) throw e;
+        console.log("Retrying page load...");
+        await page.waitForTimeout(3000);
       }
+    }
 
-            await withAwaitLog(`scrollUntilCardsStop page ${pageNum}`, () =>
-              scrollUntilCardsStop(page)
-            );
-            await lazyWarmup(page);
+    await maybeCloseStoreModal(page);
 
-            let pageResult = await withAwaitLog(
-              `extractPage page ${pageNum}`,
-              () => extractPage(pageNum)
-            );
-            const placeholderCandidate =
-              pageNum > 1 &&
-              pageResult.cardsDetected === 1 &&
-              !pageResult.hasTitle &&
-              !pageResult.hasLink;
-
-            if (placeholderCandidate) {
-              console.warn(`[PAGINATION] Page ${pageNum}: placeholder détecté, retry après reload.`);
-              await withAwaitLog("reload page (placeholder)", () =>
-                page.reload({ waitUntil: "domcontentloaded" }).catch(() => {})
-              );
-              await waitForNetworkIdleOrTimeout(page, "after reload placeholder");
-              await withAwaitLog("waitProductsStable after reload", () => waitProductsStable(page, 60000));
-              await withAwaitLog("waitForRealCards after reload", () =>
-                waitForRealCards(page, { timeout: 45000, minRealCards: 5 })
-              );
-              await withAwaitLog("scrollUntilCardsStop after reload", () =>
-                scrollUntilCardsStop(page)
-              );
-              await lazyWarmup(page);
-              pageResult = await withAwaitLog(
-                `extractPage retry page ${pageNum}`,
-                () => extractPage(pageNum)
-              );
-            }
-
-            const {
-              records,
-              totalProducts,
-              rawCount,
-              productKeys,
-              cardsDetected,
-              withAnyPrice,
-              withBothPrices,
-              deals50,
-              hasTitle,
-              hasLink,
-            } = pageResult;
-            console.log(
-              `[PAGINATION] Page ${pageNum}: items extraits=${cardsDetected ?? rawCount ?? 0} ` +
-              `cardsDetected=${cardsDetected ?? 0} withAnyPrice=${withAnyPrice ?? 0} ` +
-              `withBothPrices=${withBothPrices ?? 0} deals50=${deals50 ?? 0}`
-            );
-
-      let realCardStats = await getRealCardStats(page);
-      const placeholderCandidate =
-        realCardStats.cardsDetected <= 2 && realCardStats.realCards === 0;
-
-      if (placeholderCandidate) {
-        console.warn(`[PAGINATION] Page ${pageNum}: placeholder détecté, reload unique.`);
-        await withAwaitLog("reload page (placeholder)", () =>
-          page.reload({ waitUntil: "domcontentloaded" }).catch(() => {})
-        );
-        await waitForNetworkIdleOrTimeout(page, "after reload placeholder");
-        await withAwaitLog("waitProductsStable after reload", () => waitProductsStable(page, 60000));
-        await withAwaitLog("waitForRealCards after reload", () =>
-          waitForRealCards(page, { timeout: 45000, minRealCards: 5 })
-        );
-        realCardStats = await getRealCardStats(page);
-        if (realCardStats.cardsDetected <= 2 && realCardStats.realCards === 0) {
-          if (debugDir) {
-            await savePageDebugArtifacts(page, debugDir, {
-              pageNum,
-              label: "pagination-placeholder",
-              responseStatus: lastResponseStatus,
-            });
-          }
-          console.log(`[PAGINATION] Stop page ${pageNum}: placeholder persistant.`);
-          return;
+    if (!storeInitialized) {
+      const m = pageUrl.match(/[?&]store=(\d+)/);
+      const storeIdFromUrl = m ? m[1] : null;
+      if (storeIdFromUrl || storeId) {
+        const selectionOk = await selectStore(page, {
+          storeId: storeIdFromUrl || storeId,
+          storeName,
+          debugDir,
+        });
+        if (!selectionOk) {
+          throw new Error(`Store selection failed for ${storeIdFromUrl || storeId}`);
         }
+        await page.goto(pageUrl, { timeout: 120000, waitUntil: "domcontentloaded" }).catch(() => {});
       }
+      storeInitialized = true;
+    }
 
-      await withAwaitLog(`clickLoadMoreUntilNoGrowth page ${pageNum}`, () =>
-        clickLoadMoreUntilNoGrowth(page, {
-          cardSelector: SELECTORS.card,
-          stableRoundsToStop: 3,
-          maxTotalMs: 360000,
-        })
-      );
-      await lazyWarmup(page);
-      await autoScrollLoadAllProducts(page, autoScrollConfig);
+    const isStable = await waitProductsStable(page);
+    if (!isStable) {
+      console.log(`[PAGINATION] Stop page ${pageNum}: page instable ou timeout.`);
+      break;
+    }
 
-      const pageResult = await withAwaitLog(
-        `extractPage page ${pageNum}`,
-        () => extractPage(pageNum)
-      );
+    await lazyWarmup(page);
+    await autoScrollLoadAllProducts(page, autoScrollConfig);
 
-      const {
-        records,
-        totalProducts,
-        rawCount,
-        cardsDetected,
-        withAnyPrice,
-        withBothPrices,
-        deals50,
-      } = pageResult;
+    const { records, totalProducts, productKeys } = await extractPage(pageNum);
+    console.log(`[PAGINATION] Page ${pageNum}: ${records.length} items extraits`);
+
+    items.push(...records);
+
+    let newlyAdded = 0;
+    for (const record of records) {
+      const sku = record.sku ?? record.sku_formatted ?? null;
+      const url = normalizeProductUrlForDedup(record.url || record.link);
+      const key = sku ? `sku:${String(sku).toLowerCase()}` : url ? `url:${url}` : null;
+      if (!key) continue;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      newlyAdded += 1;
+    }
+
+    if (newlyAdded === 0) {
+      zeroStreak += 1;
+    } else {
+      zeroStreak = 0;
+    }
+
+    console.log(
+      `[PAGINATION] Page ${pageNum} stats: extracted=${records.length}, newlyAdded=${newlyAdded}, zeroStreak=${zeroStreak}, totalUnique=${seen.size}`
+    );
+
+    if (zeroStreak >= ZERO_STREAK_LIMIT) {
       console.log(
-        `[PAGINATION] Page ${pageNum}: items extraits=${cardsDetected ?? rawCount ?? 0} ` +
-        `cardsDetected=${cardsDetected ?? 0} withAnyPrice=${withAnyPrice ?? 0} ` +
-        `withBothPrices=${withBothPrices ?? 0} deals50=${deals50 ?? 0}`
+        `[PAGINATION] Stop page ${pageNum}: zeroStreak >= ${ZERO_STREAK_LIMIT} (aucun nouvel item).`
       );
+      break;
+    }
 
-      items.push(...records);
-    })();
-  } finally {
-    clearInterval(watchdogTimer);
+    let stopReason = null;
+    if (!totalProducts || totalProducts <= 0) {
+      stopReason = "aucun produit sur la page";
+    } else if (records.length === 0) {
+      stopReason = "0 item extrait";
+    } else {
+      const signature = Array.from(productKeys || [])
+        .map((k) => String(k).toLowerCase())
+        .sort()
+        .join("|");
+      if (previousSignature && signature && signature === previousSignature) {
+        stopReason = "contenu identique à la page précédente (signature produits)";
+      }
+      previousSignature = signature || previousSignature;
+
+      if (!stopReason && totalProducts < 50) {
+        stopReason = "< 50 produits détectés (dernière page probable)";
+      }
+    }
+
+    if (stopReason) {
+      console.log(`[PAGINATION] Stop page ${pageNum}: ${stopReason}`);
+      break;
+    }
   }
 
   return items;
@@ -2007,8 +1286,6 @@ async function scrapeStore(store) {
     storeName: store?.storeName ?? store?.city ?? store?.name ?? "",
   };
   const storeId = args.storeId != null ? String(args.storeId) : normalizedStore.storeId;
-  const storeNorm = normalizeStoreId(storeId);
-  const storeIdForUrl = storeNorm || (storeId != null ? String(storeId) : "");
   const city = normalizedStore.storeName || null;
   const cliStoreName = args.storeName ? String(args.storeName) : "";
   const storeName = cliStoreName || normalizedStore.storeName || "";
@@ -2020,14 +1297,16 @@ async function scrapeStore(store) {
   }
   console.log(`[SCRAPER] Magasin ${storeId ?? "?"} – ${storeName || city || "Nom inconnu"} : début`);
 
-  const { OUT_BASE, jsonPath: OUT_JSON } = resolveOutputPaths(
+    const { OUT_BASE, jsonPath: OUT_JSON, csvPath: OUT_CSV } = resolveOutputPaths(
       storeId ?? "",
       storeName || city || ""
     );
+    const storeSlug = path.basename(OUT_BASE);
     const debugDir = path.join(OUT_BASE, "debug");
 
   console.log(`OUT_BASE=${OUT_BASE}`);
   console.log(`💾  JSON → ${OUT_JSON}`);
+  console.log(`📄  CSV  → ${OUT_CSV}`);
 
   const browser = await chromium.launch({ headless: HEADLESS, args: ["--disable-dev-shm-usage"] });
   const context = await browser.newContext({ locale: "fr-CA" });
@@ -2035,15 +1314,18 @@ async function scrapeStore(store) {
   const page = await context.newPage();
   page.setDefaultNavigationTimeout(0);
 
-  const storeContext = { storeId: storeNorm || storeId, city: storeName || city || null };
+  const storeContext = { storeId, city: storeName || city || null };
 
   try {
     await page.route("**/*medallia*", (route) => route.abort());
     await page.route("**/resources.digital-cloud.medallia.ca/**", (route) => route.abort());
     await fsExtra.ensureDir(OUT_BASE);
 
-    const baseUrl = DEFAULT_BASE;
-    const storeUrl = `${baseUrl}?store=${storeIdForUrl}`;
+    const categoryUrls = await getCategoryUrls();
+    const urlsToProcess = categoryUrls.length ? categoryUrls : [DEFAULT_BASE];
+    console.log(
+      `[SCRAPER] ${urlsToProcess.length} catégorie(s) à parcourir pour le magasin ${storeId ?? "?"}.`
+    );
     console.log(`⚙️  Options → liquidation_price=${INCLUDE_LIQUIDATION_PRICE ? "on":"off"}, regular_price=${INCLUDE_REGULAR_PRICE ? "on":"off"}`);
 
     const allDeals = [];
@@ -2057,20 +1339,11 @@ async function scrapeStore(store) {
       return true;
     };
 
-    const extractProductsOnPage = async (skipGuards, pageNum) => {
+    const extractProductsOnPage = async (skipGuards) => {
       const cards = await scrapeListing(page, { skipGuards });
       const pageIsClearance = /\/liquidation\.html/i.test(await page.url());
       const productKeysSet = new Set();
       const records = [];
-      const debugSamples = [];
-      const hasTitle = cards.some((card) => Boolean(card?.name || card?.title));
-      const hasLink = cards.some((card) => Boolean(card?.link));
-      const stats = {
-        cardsDetected: cards.length,
-        withAnyPrice: 0,
-        withBothPrices: 0,
-        deals50: 0,
-      };
 
       for (const card of cards) {
         const availabilityKeys = buildCtKeysFromAvailability(card.availability);
@@ -2108,41 +1381,15 @@ async function scrapeStore(store) {
           null
         );
 
-        if (regularPriceForCheck != null || salePriceForCheck != null) {
-          stats.withAnyPrice += 1;
-          if (regularPriceForCheck != null && salePriceForCheck != null) {
-            stats.withBothPrices += 1;
-          }
-        }
-
         const discountPercent = computeDiscountPercent(
           regularPriceForCheck,
           salePriceForCheck
         );
 
-        if (discountPercent != null && discountPercent >= 50) {
-          stats.deals50 += 1;
-        }
-
-        if (debugSamples.length < 10) {
-          const saleRaw = card.price_sale_raw ?? card.price_sale ?? null;
-          const wasRaw = card.price_original_raw ?? card.price_original ?? null;
-          const saleNum = extractPrice(saleRaw ?? undefined);
-          const regularNum = extractPrice(wasRaw ?? undefined);
-          const discount = computeDiscountPercent(regularNum, saleNum);
-
-          debugSamples.push({
-            title: card.name || card.title || null,
-            saleRaw: saleRaw || null,
-            wasRaw: wasRaw || null,
-            sale: saleNum ?? null,
-            regular: regularNum ?? null,
-            discount: discount ?? null,
-            url: card.link || null,
-          });
-        }
-
-        if (discountPercent == null || discountPercent < 50) {
+        if (
+          discountPercent == null ||
+          discountPercent < 50
+        ) {
           continue;
         }
         const record = createRecordFromCard(
@@ -2156,67 +1403,47 @@ async function scrapeStore(store) {
         }
       }
 
-      const needsPriceDebug =
-        stats.cardsDetected > 0 &&
-        (stats.withAnyPrice === 0 || (pageNum === 1 && stats.deals50 === 0));
-
-      if (needsPriceDebug) {
-        const pageLabel = pageNum != null ? `page ${pageNum}` : "page";
-        console.log(`[DEBUG] ${pageLabel} – premières cartes (max 10):`);
-        debugSamples.forEach((sample, index) => {
-          console.log(
-            [
-              `[DEBUG][${pageLabel}][${index + 1}]`,
-              `title=${sample.title ?? "n/a"}`,
-              `saleRaw=${sample.saleRaw ?? "n/a"}`,
-              `wasRaw=${sample.wasRaw ?? "n/a"}`,
-              `sale=${sample.sale ?? "n/a"}`,
-              `regular=${sample.regular ?? "n/a"}`,
-              `discount%=${sample.discount ?? "n/a"}`,
-              `url=${sample.url ?? "n/a"}`,
-            ].join(" | ")
-          );
-        });
-
-        if (debugDir) {
-          await savePagePriceDebugArtifacts(page, debugDir, pageNum ?? 0);
-        }
-      }
-
-      return {
-        records,
-        totalProducts: stats.cardsDetected,
-        rawCount: stats.cardsDetected,
-        productKeys: productKeysSet,
-        accepted: records.length,
-        cardsDetected: stats.cardsDetected,
-        withAnyPrice: stats.withAnyPrice,
-        withBothPrices: stats.withBothPrices,
-        deals50: stats.deals50,
-        hasTitle,
-        hasLink,
-      };
+      return { records, totalProducts: cards.length, productKeys: productKeysSet, accepted: records.length };
     };
 
-    const itemsAllPages = await scrapeCategoryAllPages(page, storeUrl, storeNorm || storeId, {
-      extractPage: (pageNum) => extractProductsOnPage(true, pageNum),
-      storeName: storeName || city || "",
-      debugDir,
-    });
+    for (const categoryUrl of urlsToProcess) {
+      if (hasReachedTimeLimit()) {
+        console.log(
+          `[SCRAPER] Limite atteinte avant le chargement de la catégorie ${categoryUrl} pour ${storeId ?? "?"}.`
+        );
+        break;
+      }
 
-    let deals = itemsAllPages.filter((x) => (x.discount_percent ?? 0) >= 50);
-    deals = dedupeDeals(deals);
+      const storeCategoryUrl = buildCategoryUrlForStore(categoryUrl, storeId);
+      const autoScrollConfig = {
+        productSelector: SELECTORS.card,
+        maxRounds: Number(args.autoScrollMaxRounds) || AUTO_SCROLL_DEFAULTS.maxRounds,
+        stableRoundsToStop: Number(args.autoScrollStableRounds) || AUTO_SCROLL_DEFAULTS.stableRoundsToStop,
+        perRoundWaitMs: Number(args.autoScrollWaitMs) || AUTO_SCROLL_DEFAULTS.perRoundWaitMs,
+        maxTotalMs: Number(args.autoScrollMaxTotalMs) || AUTO_SCROLL_DEFAULTS.maxTotalMs,
+      };
 
-    let accepted = 0;
-    for (const deal of deals) {
-      if (registerRecord(deal)) accepted += 1;
-    }
+      const itemsAllPages = await scrapeCategoryAllPages(page, storeCategoryUrl, storeId, {
+        extractPage: () => extractProductsOnPage(true),
+        autoScrollConfig,
+        storeName: storeName || city || "",
+        debugDir,
+      });
 
-    console.log(
-      `✅ ${accepted} deal(s) >= 50% agrégés sur ${itemsAllPages.length} item(s) pour ${storeUrl}`
-    );
-    if (accepted === 0) {
-      console.log("ℹ️  Aucun deal >= 50% trouvé sur l'ensemble des pages de liquidation.");
+      let deals = itemsAllPages.filter((x) => (x.discount_percent ?? 0) >= 50);
+      deals = dedupeDeals(deals);
+
+      let accepted = 0;
+      for (const deal of deals) {
+        if (registerRecord(deal)) accepted += 1;
+      }
+
+      console.log(
+        `✅ ${accepted} deal(s) >= 50% agrégés sur ${itemsAllPages.length} item(s) pour ${storeCategoryUrl}`
+      );
+      if (accepted === 0) {
+        console.log("ℹ️  Aucun deal >= 50% trouvé sur l'ensemble des pages de cette catégorie.");
+      }
     }
 
     console.log(
@@ -2226,9 +1453,57 @@ async function scrapeStore(store) {
     const results = allDeals.map((out) => ({ ...out, image_url: out.image_url ?? out.image ?? null }));
 
     await fsExtra.remove(OUT_JSON);
+    await fsExtra.remove(OUT_CSV);
+    const publicStoreDir = path.join(process.cwd(), "public", "canadiantire", storeSlug);
+    const publicJsonPath = path.join(publicStoreDir, "data.json");
+    const publicCsvPath = path.join(publicStoreDir, "data.csv");
+    await fsExtra.remove(publicJsonPath);
+    await fsExtra.remove(publicCsvPath);
 
     fs.writeFileSync(OUT_JSON, JSON.stringify(results, null, 2));
     console.log(`💾  JSON → ${OUT_JSON}`);
+
+    const csv = createObjectCsvWriter({
+      path: OUT_CSV,
+      header: [
+        { id: "store_id", title: "store_id" },
+        { id: "city", title: "city" },
+        { id: "name", title: "name" },
+        { id: "title", title: "title" },
+        { id: "price", title: "price" },
+        { id: "price_raw", title: "price_raw" },
+        ...(INCLUDE_REGULAR_PRICE ? [
+          { id: "regular_price", title: "regular_price" },
+          { id: "regular_price_raw", title: "regular_price_raw" },
+        ] : []),
+        ...(INCLUDE_LIQUIDATION_PRICE ? [
+          { id: "liquidation_price", title: "liquidation_price" },
+          { id: "liquidation_price_raw", title: "liquidation_price_raw" },
+          { id: "sale_price", title: "sale_price" },
+          { id: "sale_price_raw", title: "sale_price_raw" },
+        ] : []),
+        { id: "liquidation", title: "liquidation" },
+        { id: "url", title: "url" },
+        { id: "link", title: "link" },
+        { id: "image", title: "image" },
+        { id: "image_url", title: "image_url" },
+        { id: "product_id", title: "product_id" },
+        { id: "product_number_raw", title: "product_number_raw" },
+        { id: "product_number", title: "product_number" },
+        { id: "product_key", title: "product_key" },
+        { id: "sku", title: "sku" },
+        { id: "sku_formatted", title: "sku_formatted" },
+        { id: "availability", title: "availability" },
+        { id: "availability_text", title: "availability_text" },
+        { id: "stockQty", title: "stockQty" },
+        { id: "badges", title: "badges" },
+        { id: "discount_percent", title: "discount_percent" },
+        { id: "price_sale_clean", title: "price_sale_clean" },
+        { id: "price_original_clean", title: "price_original_clean" },
+      ],
+    });
+    await csv.writeRecords(results);
+    console.log(`📄  CSV  → ${OUT_CSV}`);
 
     console.log(`[SCRAPER] Magasin ${storeId ?? "?"} – terminé`);
   } catch (error) {
