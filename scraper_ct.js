@@ -186,9 +186,36 @@ const PAGINATION_NAV_SELECTOR = [
   "nav[role='navigation']:has([aria-current])",
 ].join(", ");
 
+const PRICE_SELECTORS = {
+  sale: [
+    "span[data-testid='priceTotal']",
+    "[data-testid='sale-price']",
+    ".nl-price--total",
+    ".nl-price__total",
+    ".price__value",
+    ".c-pricing__current",
+  ],
+  regular: [
+    "[data-testid='regular-price']",
+    ".nl-price__was s",
+    ".nl-price--was",
+    ".nl-price__was",
+  ],
+  priceContainer: [
+    "[data-testid='price']",
+    "[data-testid='pricing']",
+    ".nl-price",
+    ".nl-price__container",
+    ".c-pricing",
+    ".price",
+    ".price__value",
+    ".nl-price__text",
+  ],
+};
+
 const SEL = {
   card: "li[data-testid=\"product-grids\"]",
-  price: "span[data-testid=\"priceTotal\"], .nl-price--total, .price, .c-pricing__current",
+  price: PRICE_SELECTORS.sale.join(", "),
   paginationNav: PAGINATION_NAV_SELECTOR,
   currentPage: `${PAGINATION_NAV_SELECTOR} [aria-current], ${PAGINATION_NAV_SELECTOR} [aria-current=\"page\"]`,
 };
@@ -484,7 +511,7 @@ async function extractFromCard(card) {
 async function scrapeListing(page, { skipGuards = false } = {}) {
   if (!skipGuards) {
     await page.waitForSelector(SELECTORS.card, { timeout: 60000 });
-    await page.waitForSelector("span[data-testid='priceTotal'], .nl-price--total", { timeout: 20000 }).catch(() => {});
+    await page.waitForSelector(PRICE_SELECTORS.sale.join(", "), { timeout: 20000 }).catch(() => {});
   } else {
     const hasCards = await page.locator(SELECTORS.card).count();
     if (!hasCards) {
@@ -496,7 +523,7 @@ async function scrapeListing(page, { skipGuards = false } = {}) {
   try {
     const items =
       (await cardsLocator.evaluateAll((nodes, { base }) => {
-      const cleanMoney = (s) => {
+        const cleanMoney = (s) => {
         if (!s) return null;
         s = s.replace(/\u00a0/g, " ").trim();
         const m = s.match(/(\d[\d\s.,]*)(?:\s*\$)?/);
@@ -507,6 +534,15 @@ async function scrapeListing(page, { skipGuards = false } = {}) {
         if (!node) return null;
         const t = node.textContent;
         return t ? t.trim() : null;
+      };
+
+      const textFromSelectorList = (root, selectors) => {
+        for (const sel of selectors) {
+          const node = root.querySelector(sel);
+          const text = textFromEl(node);
+          if (text) return text;
+        }
+        return null;
       };
 
       const extractSkuData = (anchor) => {
@@ -543,9 +579,60 @@ async function scrapeListing(page, { skipGuards = false } = {}) {
       return nodes.map((el) => {
         const titleEl = el.querySelector("[id^='title__promolisting-'], .nl-product-card__title");
         const title = textFromEl(titleEl);
+        const priceContainer =
+          el.querySelector(
+            "[data-testid='price'], [data-testid='pricing'], .nl-price, .nl-price__container, .c-pricing, .price, .price__value, .nl-price__text"
+          ) || el;
 
-        const priceSaleRaw = textFromEl(el.querySelector("span[data-testid='priceTotal'], .nl-price--total"));
-        const priceWasRaw = textFromEl(el.querySelector(".nl-price__was s, .nl-price__was, .nl-price--was, .nl-price__change s"));
+        const priceSaleRaw =
+          textFromSelectorList(priceContainer, [
+            "span[data-testid='priceTotal']",
+            "[data-testid='sale-price']",
+            ".nl-price--total",
+            ".nl-price__total",
+            ".price__value",
+            ".c-pricing__current",
+          ]) || textFromSelectorList(el, [
+            "span[data-testid='priceTotal']",
+            "[data-testid='sale-price']",
+            ".nl-price--total",
+            ".nl-price__total",
+            ".price__value",
+            ".c-pricing__current",
+          ]);
+
+        const wasSelectors = [
+          "[data-testid='regular-price']",
+          ".nl-price__was s",
+          ".nl-price--was",
+          ".nl-price__was",
+          "s",
+          "del",
+        ];
+        let priceWasRaw = textFromSelectorList(priceContainer, wasSelectors);
+
+        if (!priceWasRaw) {
+          const priceLabel =
+            priceContainer.getAttribute("aria-label") ||
+            priceContainer.getAttribute("title") ||
+            null;
+          if (priceLabel) {
+            const wasMatch = priceLabel.match(/(était|was|regular)[^0-9]*([\d\s.,]+)/i);
+            if (wasMatch) {
+              priceWasRaw = wasMatch[2];
+            }
+          }
+        }
+
+        if (!priceWasRaw) {
+          const datasetValues = Object.values(priceContainer.dataset || {}).join(" ");
+          if (datasetValues) {
+            const wasMatch = datasetValues.match(/(était|was|regular)[^0-9]*([\d\s.,]+)/i);
+            if (wasMatch) {
+              priceWasRaw = wasMatch[2];
+            }
+          }
+        }
         const price_sale = cleanMoney(priceSaleRaw);
         const price_original = cleanMoney(priceWasRaw);
 
@@ -1080,7 +1167,15 @@ async function lazyWarmup(page) {
   await page.waitForTimeout(40);
   await Promise.race([
     page.waitForSelector(
-      "[data-testid='sale-price'], [data-testid='regular-price'], span[data-testid='priceTotal'], .nl-price--total, .price, .price__value",
+      [
+        "[data-testid='sale-price']",
+        "[data-testid='regular-price']",
+        "span[data-testid='priceTotal']",
+        ".nl-price--total",
+        ".nl-price__total",
+        ".price__value",
+        ".c-pricing__current",
+      ].join(", "),
       { timeout: 4500 }
     ),
     page.waitForTimeout(650),
@@ -1449,7 +1544,7 @@ async function scrapeStoreAllPages(page, storeUrl, storeId, {
     await lazyWarmup(page);
     await autoScrollLoadAllProducts(page, autoScrollConfig);
 
-    const { records, totalProducts, productKeys } = await extractPage(pageNum);
+    const { records, totalProducts, rawCount, productKeys } = await extractPage(pageNum);
     console.log(`[PAGINATION] Page ${pageNum}: ${records.length} items extraits`);
 
     items.push(...records);
@@ -1457,13 +1552,13 @@ async function scrapeStoreAllPages(page, storeUrl, storeId, {
     let stopReason = null;
     if (!totalProducts || totalProducts <= 0) {
       stopReason = "aucun produit sur la page";
-    } else if (records.length === 0) {
+    } else if (!rawCount || rawCount <= 0) {
       emptyPageStreak += 1;
       console.log(
-        `[PAGINATION] Page ${pageNum}: 0 item extrait (empty streak ${emptyPageStreak}/${EMPTY_STREAK_LIMIT}).`
+        `[PAGINATION] Page ${pageNum}: 0 item brut (empty streak ${emptyPageStreak}/${EMPTY_STREAK_LIMIT}).`
       );
       if (emptyPageStreak >= EMPTY_STREAK_LIMIT) {
-        stopReason = "0 item extrait sur 2 pages consécutives";
+        stopReason = "0 item brut sur 2 pages consécutives";
       }
     } else {
       emptyPageStreak = 0;
@@ -1542,11 +1637,13 @@ async function scrapeStore(store) {
       return true;
     };
 
-    const extractProductsOnPage = async (skipGuards) => {
+    const extractProductsOnPage = async (skipGuards, pageNum) => {
       const cards = await scrapeListing(page, { skipGuards });
       const pageIsClearance = /\/liquidation\.html/i.test(await page.url());
       const productKeysSet = new Set();
       const records = [];
+      const debugSamples = [];
+      let shouldSaveDebugPage = false;
 
       for (const card of cards) {
         const availabilityKeys = buildCtKeysFromAvailability(card.availability);
@@ -1589,6 +1686,28 @@ async function scrapeStore(store) {
           salePriceForCheck
         );
 
+        if (args.debug && debugSamples.length < 10) {
+          const saleRaw = card.price_sale_raw ?? card.price_sale ?? null;
+          const wasRaw = card.price_original_raw ?? card.price_original ?? null;
+          const saleNum = extractPrice(saleRaw ?? undefined);
+          const regularNum = extractPrice(wasRaw ?? undefined);
+          const discount = computeDiscountPercent(regularNum, saleNum);
+
+          debugSamples.push({
+            title: card.name || card.title || null,
+            saleRaw: saleRaw || null,
+            wasRaw: wasRaw || null,
+            sale: saleNum ?? null,
+            regular: regularNum ?? null,
+            discount: discount ?? null,
+            url: card.link || null,
+          });
+
+          if (!saleRaw || !wasRaw) {
+            shouldSaveDebugPage = true;
+          }
+        }
+
         if (
           discountPercent == null ||
           discountPercent < 50
@@ -1606,7 +1725,39 @@ async function scrapeStore(store) {
         }
       }
 
-      return { records, totalProducts: cards.length, productKeys: productKeysSet, accepted: records.length };
+      if (args.debug) {
+        const pageLabel = pageNum != null ? `page ${pageNum}` : "page";
+        console.log(`[DEBUG] ${pageLabel} – premières cartes (max 10):`);
+        debugSamples.forEach((sample, index) => {
+          console.log(
+            [
+              `[DEBUG][${pageLabel}][${index + 1}]`,
+              `title=${sample.title ?? "n/a"}`,
+              `saleRaw=${sample.saleRaw ?? "n/a"}`,
+              `wasRaw=${sample.wasRaw ?? "n/a"}`,
+              `sale=${sample.sale ?? "n/a"}`,
+              `regular=${sample.regular ?? "n/a"}`,
+              `discount%=${sample.discount ?? "n/a"}`,
+              `url=${sample.url ?? "n/a"}`,
+            ].join(" | ")
+          );
+        });
+
+        if (shouldSaveDebugPage && debugDir) {
+          await savePageDebugArtifacts(page, debugDir, {
+            pageNum: pageNum ?? 0,
+            label: "missing-price",
+          });
+        }
+      }
+
+      return {
+        records,
+        totalProducts: cards.length,
+        rawCount: cards.length,
+        productKeys: productKeysSet,
+        accepted: records.length,
+      };
     };
 
     const autoScrollConfig = {
@@ -1618,7 +1769,7 @@ async function scrapeStore(store) {
     };
 
     const itemsAllPages = await scrapeStoreAllPages(page, storeUrl, storeId, {
-      extractPage: () => extractProductsOnPage(true),
+      extractPage: (pageNum) => extractProductsOnPage(true, pageNum),
       autoScrollConfig,
       storeName: storeName || city || "",
       debugDir,
