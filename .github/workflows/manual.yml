@@ -112,10 +112,11 @@ jobs:
         with:
           path: artifacts
 
-      - name: Unzip scraper outputs into repo root
+      - name: Unzip artifacts to staging
         run: |
+          mkdir -p staging
           shopt -s nullglob
-          for zipfile in artifacts/*.zip; do
+          for zipfile in artifacts/**/*.zip; do
             unzip -o "$zipfile" -d staging
           done
 
@@ -128,17 +129,23 @@ jobs:
       - name: Debug staging and econoplus content
         run: |
           mkdir -p econoplus/public/canadiantire
-          echo "Find staging (maxdepth 6):"
-          find staging -maxdepth 6 -print
+          echo "List artifacts contents:"
+          find artifacts -maxdepth 4 -print || true
+          echo "List staging contents:"
+          find staging -maxdepth 6 -print || true
           echo "Find staging public/canadiantire paths:"
-          find staging -path "*/public/canadiantire/*" -print
+          find staging -path "*/public/canadiantire/*" -print || true
           echo "Find econoplus public/canadiantire:"
-          find econoplus/public/canadiantire -print
+          find econoplus/public/canadiantire -print || true
 
       - name: Sync scraper outputs into ECONOPLUS repo
         run: |
           mkdir -p econoplus/public/canadiantire
           mapfile -t source_dirs < <(find staging -type d -path "*/public/canadiantire")
+          if [ "${#source_dirs[@]}" -eq 0 ]; then
+            echo "No public/canadiantire directories found under staging."
+            exit 1
+          fi
           for source_dir in "${source_dirs[@]}"; do
             rsync -a "${source_dir}/" econoplus/public/canadiantire/
           done
