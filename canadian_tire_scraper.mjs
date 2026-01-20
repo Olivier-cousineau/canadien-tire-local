@@ -1,33 +1,47 @@
-
 #!/usr/bin/env node
 import { chromium } from "playwright";
 import fs from "fs-extra";
 import slugify from "slugify";
 import { createObjectCsvWriter } from "csv-writer";
 import minimist from "minimist";
+import path from "path";
+import { fileURLToPath } from "url";
+import pLimit from "p-limit";
 
-const args = minimist(process.argv.slice(2));
+const args = minimist(process.argv.slice(2), {
+  string: ["store", "city", "concurrency", "pages"],
+});
 const STORE_ID = args.store || args.s || null;
 const CITY = args.city || "";
 const HEADLESS = args.headless !== false;
 const MAX_PAGES = args.pages ? Number(args.pages) : null;
-
-const citySlug = CITY ? `-${slugify(CITY, { lower: true, strict: true })}` : "";
-const OUT_BASE = `./outputs/canadiantire/${STORE_ID || "default"}${citySlug}`;
-const OUT_JSON = `${OUT_BASE}/data.json`;
-const OUT_CSV = `${OUT_BASE}/data.csv`;
+const CONCURRENCY = Number.isFinite(Number(args.concurrency))
+  ? Math.max(1, Number(args.concurrency))
+  : 4;
 
 const DISCOUNT_FILTER = ["50-59", "60-69", "70-79", "80-89", "90-100"];
 const BASE_URL = "https://www.canadiantire.ca/en/search-results.html";
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const buildUrl = (page = 1) => {
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const storesFilePath = path.join(__dirname, "data", "canadian_tire_stores.json");
+
+const loadStores = async () => {
+  if (!(await fs.pathExists(storesFilePath))) {
+    return [];
+  }
+  return fs.readJson(storesFilePath);
+};
+
+const buildUrl = (storeId, page = 1) => {
   const refinements = DISCOUNT_FILTER.map((range) => `discount_percent%3A${range}`).join("%3A");
   const params = new URLSearchParams({
     q: "*",
     openfacetrefinements: refinements,
-    store: STORE_ID || "",
+    store: storeId || "",
     page: String(page),
   });
   return `${BASE_URL}?${params.toString()}`;
@@ -39,17 +53,21 @@ const parsePrice = (value = "") => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-const scrapePage = async (page, pageNumber) => {
-  const url = buildUrl(pageNumber);
+const scrapePage = async (page, pageNumber, storeId, city) => {
+  const url = buildUrl(storeId, pageNumber);
   console.log(`Navigating to ${url}`);
   await page.goto(url, { waitUntil: "networkidle" });
   await page.waitForLoadState("domcontentloaded");
 
-  const cards = await page.$$("[data-test='product-tile']");
+  const cards = await page.$$('[data-test="product-tile"]');
   const items = [];
 
   for (const card of cards) {
-    const title = (await card.$eval("[data-test='product-title']", (el) => el.textContent?.trim() || "").catch(() => "")).trim();
+    const title = (
+      await card
+        .$eval("[data-test='product-title']", (el) => el.textContent?.trim() || "")
+        .catch(() => "")
+    ).trim();
     const link = await card.$eval("a", (el) => el.href).catch(() => "");
 
     const priceText = await card
@@ -66,8 +84,8 @@ const scrapePage = async (page, pageNumber) => {
     if (!discount || discount < 50) continue;
 
     items.push({
-      storeId: STORE_ID,
-      city: CITY,
+      storeId,
+      city,
       title,
       price,
       wasPrice,
@@ -88,9 +106,9 @@ const scrapePage = async (page, pageNumber) => {
   };
 };
 
-const writeCsv = async (records) => {
+const writeCsv = async (outCsv, records) => {
   const csvWriter = createObjectCsvWriter({
-    path: OUT_CSV,
+    path: outCsv,
     header: [
       { id: "storeId", title: "STORE_ID" },
       { id: "city", title: "CITY" },
@@ -106,7 +124,12 @@ const writeCsv = async (records) => {
   await csvWriter.writeRecords(records);
 };
 
-const main = async () => {
+const scrapeStore = async ({ storeId, storeName }) => {
+  const citySlug = storeName ? `-${slugify(storeName, { lower: true, strict: true })}` : "";
+  const outBase = `./outputs/canadiantire/${storeId || "default"}${citySlug}`;
+  const outJson = `${outBase}/data.json`;
+  const outCsv = `${outBase}/data.csv`;
+
   const browser = await chromium.launch({ headless: HEADLESS });
   const context = await browser.newContext({
     viewport: { width: 1280, height: 720 },
@@ -119,7 +142,7 @@ const main = async () => {
 
   try {
     while (hasNext) {
-      const { items, hasNext: next } = await scrapePage(page, pageNumber);
+      const { items, hasNext: next } = await scrapePage(page, pageNumber, storeId, storeName || "");
       results.push(...items);
       hasNext = next;
       pageNumber += 1;
@@ -134,16 +157,45 @@ const main = async () => {
       }
     }
   } catch (error) {
-    console.error("Error during scrape", error);
+    console.error(`Error during scrape for store ${storeId}`, error);
   } finally {
     await browser.close();
   }
 
-  await fs.ensureDir(OUT_BASE);
-  await fs.writeJson(OUT_JSON, results, { spaces: 2 });
-  await writeCsv(results);
+  await fs.ensureDir(outBase);
+  await fs.writeJson(outJson, results, { spaces: 2 });
+  await writeCsv(outCsv, results);
 
-  console.log(`Saved ${results.length} items to ${OUT_JSON} and ${OUT_CSV}`);
+  console.log(`Saved ${results.length} items to ${outJson} and ${outCsv}`);
+};
+
+const main = async () => {
+  let stores = await loadStores();
+
+  if (!stores.length) {
+    if (STORE_ID) {
+      stores = [{ storeId: STORE_ID, storeName: CITY }];
+    } else {
+      console.error(`No stores found in ${storesFilePath} and no --store provided.`);
+      process.exit(1);
+    }
+  }
+
+  if (STORE_ID) {
+    stores = stores.filter((store) => String(store.storeId ?? "") === String(STORE_ID));
+    if (!stores.length) {
+      stores = [{ storeId: STORE_ID, storeName: CITY }];
+    }
+  }
+
+  if (!STORE_ID && CITY) {
+    stores = stores.filter((store) => String(store.storeName ?? "").includes(CITY));
+  }
+
+  console.log(`Scraping ${stores.length} stores with concurrency ${CONCURRENCY}.`);
+
+  const limit = pLimit(CONCURRENCY);
+  await Promise.all(stores.map((store) => limit(() => scrapeStore(store))));
 };
 
 main();
