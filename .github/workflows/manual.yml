@@ -138,17 +138,37 @@ jobs:
           echo "Find econoplus public/canadiantire:"
           find econoplus/public/canadiantire -print || true
 
+      - name: Unzip artifacts to staging (pre-sync)
+        run: |
+          mkdir -p staging
+          shopt -s nullglob
+          for zipfile in artifacts/**/*.zip; do
+            unzip -o "$zipfile" -d staging
+          done
+
       - name: Sync scraper outputs into ECONOPLUS repo
         run: |
           mkdir -p econoplus/public/canadiantire
+          echo "List artifacts contents:"
+          find artifacts -maxdepth 4 -print || true
+          echo "List staging contents:"
+          find staging -maxdepth 6 -print || true
           mapfile -t source_dirs < <(find staging -type d -path "*/public/canadiantire")
           if [ "${#source_dirs[@]}" -eq 0 ]; then
             echo "No public/canadiantire directories found under staging."
             exit 1
           fi
-          for source_dir in "${source_dirs[@]}"; do
-            rsync -a "${source_dir}/" econoplus/public/canadiantire/
-          done
+          if command -v rsync >/dev/null 2>&1; then
+            for source_dir in "${source_dirs[@]}"; do
+              rsync -a "${source_dir}/" econoplus/public/canadiantire/
+            done
+          else
+            for source_dir in "${source_dirs[@]}"; do
+              cp -R "${source_dir}/." econoplus/public/canadiantire/
+            done
+          fi
+          echo "Files copied into econoplus/public/canadiantire:"
+          find econoplus/public/canadiantire -type f -print || true
 
       - name: Debug ECONOPLUS git status
         working-directory: econoplus
