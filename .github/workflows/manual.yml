@@ -125,12 +125,27 @@ jobs:
       - name: Rebuild Canadian Tire product index
         run: echo "Rebuild Canadian Tire product index"
 
+      - name: Debug staging and econoplus content
+        run: |
+          mkdir -p econoplus/public/canadiantire
+          echo "Find staging (maxdepth 6):"
+          find staging -maxdepth 6 -print
+          echo "Find staging public/canadiantire paths:"
+          find staging -path "*/public/canadiantire/*" -print
+          echo "Find econoplus public/canadiantire:"
+          find econoplus/public/canadiantire -print
+
       - name: Sync scraper outputs into ECONOPLUS repo
         run: |
           mkdir -p econoplus/public/canadiantire
-          if [ -d "staging/public/canadiantire" ]; then
-            cp -R staging/public/canadiantire/. econoplus/public/canadiantire/
-          fi
+          mapfile -t source_dirs < <(find staging -type d -path "*/public/canadiantire")
+          for source_dir in "${source_dirs[@]}"; do
+            rsync -a "${source_dir}/" econoplus/public/canadiantire/
+          done
+
+      - name: Debug ECONOPLUS git status
+        working-directory: econoplus
+        run: git status --porcelain
 
       - name: Commit & push
         working-directory: econoplus
