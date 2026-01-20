@@ -79,6 +79,46 @@ jobs:
         with:
           name: canadiantire-${{ matrix.storeId }}-${{ env.CITY_SLUG }}
           path: |
-            ${{ env.OUT_DIR }}/data.json
-            ${{ env.OUT_DIR }}/data.csv
+            ${{ env.OUT_DIR }}/
+            public/canadiantire/
           if-no-files-found: warn
+
+  publish-rebuild-commit:
+    runs-on: ubuntu-latest
+    needs: scrape
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download scraper outputs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: canadiantire-*
+          merge-multiple: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Publish Canadian Tire data
+        run: echo "Publish Canadian Tire data"
+
+      - name: Rebuild Canadian Tire product index
+        run: echo "Rebuild Canadian Tire product index"
+
+      - name: Commit & push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add public/canadiantire outputs/canadiantire
+          if [ -n "$(git status --porcelain)" ]; then
+            git commit -m "Update Canadian Tire (4 stores parallel)"
+            git push origin main
+          else
+            echo "No changes to commit."
+          fi
