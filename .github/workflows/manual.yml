@@ -2,36 +2,68 @@ name: Manual scraper run
 
 on:
   workflow_dispatch:
+    inputs:
+      which:
+        description: Choose shard batch to run
+        type: choice
+        options:
+          - A
+          - B
+        default: A
+      shards_total:
+        description: Total number of shards
+        type: string
+        default: "20"
+      shard_split:
+        description: Number of shards in batch A
+        type: string
+        default: "10"
 
 jobs:
   prepare:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.build-matrix.outputs.matrix }}
+      shards_json: ${{ steps.build-shards.outputs.shards_json }}
+      shards_total: ${{ steps.build-shards.outputs.shards_total }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build matrix from all stores
-        id: build-matrix
+      - name: Build shards matrix
+        id: build-shards
         run: |
           node - <<'NODE'
           const fs = require("fs");
-          const stores = JSON.parse(
-            fs.readFileSync("data/canadian_tire_stores.json", "utf8")
-          ).map(({ storeId, storeName }) => ({
-              storeId: String(storeId),
-              storeName: String(storeName),
-            }));
+          const which = process.env.WHICH || "A";
+          const shardsTotal = Number(process.env.SHARDS_TOTAL || 20);
+          const shardSplit = Number(process.env.SHARD_SPLIT || 10);
+          const start = which === "B" ? shardSplit + 1 : 1;
+          const end = which === "B" ? shardsTotal : shardSplit;
 
-          console.log("Selected stores:");
-          for (const store of stores) {
-            console.log(`- ${store.storeId} | ${store.storeName}`);
+          if (Number.isNaN(shardsTotal) || Number.isNaN(shardSplit)) {
+            throw new Error("Invalid shard inputs.");
+          }
+          if (shardSplit < 1 || shardsTotal < shardSplit) {
+            throw new Error("shard_split must be >= 1 and <= shards_total.");
+          }
+          if (start > shardsTotal) {
+            throw new Error("Batch selection exceeds total shards.");
           }
 
-          const matrix = JSON.stringify({ include: stores });
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${matrix}\n`);
+          const shards = [];
+          for (let shard = start; shard <= end; shard += 1) {
+            shards.push({ shard });
+          }
+
+          console.log(`Shard batch ${which}: ${start}..${end} of ${shardsTotal}`);
+          const shardsJson = JSON.stringify({ include: shards });
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `shards_json=${shardsJson}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `shards_total=${shardsTotal}\n`);
           NODE
+        env:
+          WHICH: ${{ inputs.which }}
+          SHARDS_TOTAL: ${{ inputs.shards_total }}
+          SHARD_SPLIT: ${{ inputs.shard_split }}
 
   scrape:
     runs-on: ubuntu-latest
@@ -39,7 +71,7 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 4
-      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+      matrix: ${{ fromJson(needs.prepare.outputs.shards_json) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -56,33 +88,55 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install chromium
 
-      - name: Log selected store
-        run: echo "Scraping storeId=${{ matrix.storeId }} storeName=${{ matrix.storeName }}"
-
-      - name: Run scraper
-        run: node scraper_ct.js --storeId "${{ matrix.storeId }}" --storeName "${{ matrix.storeName }}"
-
-      - name: Set output paths
+      - name: Select stores for shard
         run: |
-          CITY_SLUG=$(node -e "const slugify=require('slugify'); console.log(slugify(process.env.STORE_NAME,{lower:true, strict:true}));")
-          STORE_SLUG="${STORE_ID}-${CITY_SLUG}"
-          OUT_DIR="outputs/canadiantire/${STORE_SLUG}"
-          PUBLIC_DIR="public/canadiantire/${STORE_SLUG}"
-          echo "CITY_SLUG=$CITY_SLUG" >> $GITHUB_ENV
-          echo "STORE_SLUG=$STORE_SLUG" >> $GITHUB_ENV
-          echo "OUT_DIR=$OUT_DIR" >> $GITHUB_ENV
-          echo "PUBLIC_DIR=$PUBLIC_DIR" >> $GITHUB_ENV
+          node - <<'NODE'
+          const fs = require("fs");
+          const shard = Number(process.env.SHARD);
+          const shardsTotal = Number(process.env.SHARDS_TOTAL);
+          const stores = JSON.parse(
+            fs.readFileSync("data/canadian_tire_stores.json", "utf8")
+          ).map(({ storeId, storeName }) => ({
+            storeId: String(storeId),
+            storeName: String(storeName),
+          }));
+          const selected = stores.filter((_, index) => (index % shardsTotal) === (shard - 1));
+
+          console.log(`Shard ${shard}/${shardsTotal} selected ${selected.length} stores`);
+          for (const store of selected) {
+            console.log(`- ${store.storeId} | ${store.storeName}`);
+          }
+
+          fs.writeFileSync("stores_for_shard.json", JSON.stringify(selected));
+          NODE
         env:
-          STORE_ID: ${{ matrix.storeId }}
-          STORE_NAME: ${{ matrix.storeName }}
+          SHARD: ${{ matrix.shard }}
+          SHARDS_TOTAL: ${{ needs.prepare.outputs.shards_total }}
+
+      - name: Run scraper for shard stores
+        run: |
+          node - <<'NODE'
+          const { spawnSync } = require("child_process");
+          const fs = require("fs");
+          const stores = JSON.parse(fs.readFileSync("stores_for_shard.json", "utf8"));
+          for (const store of stores) {
+            console.log(`Scraping storeId=${store.storeId} storeName=${store.storeName}`);
+            const result = spawnSync(
+              "node",
+              ["scraper_ct.js", "--storeId", store.storeId, "--storeName", store.storeName],
+              { stdio: "inherit" }
+            );
+            if (result.status !== 0) {
+              process.exit(result.status ?? 1);
+            }
+          }
+          NODE
 
       - name: Upload scraper outputs
         uses: actions/upload-artifact@v4
         with:
-          name: canadiantire-${{ env.STORE_SLUG }}
-          path: |
-            ${{ env.OUT_DIR }}/
-            ${{ env.PUBLIC_DIR }}/
+          name: canadiantire-shard-${{ matrix.shard }}
+          path: outputs/canadiantire/
           if-no-files-found: warn
 
   publish-rebuild-commit:
