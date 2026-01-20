@@ -2,15 +2,46 @@ name: Manual scraper run
 
 on:
   workflow_dispatch:
-    inputs:
-      command:
-        description: "Command to run"
-        required: false
-        default: "node scraper_ct.js --storeId 0418 --storeName \"Rosemere, QC\""
 
 jobs:
-  run:
+  prepare:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.build-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build matrix from first 4 stores
+        id: build-matrix
+        run: |
+          node - <<'NODE'
+          const fs = require("fs");
+          const stores = JSON.parse(
+            fs.readFileSync("data/canadian_tire_stores.json", "utf8")
+          )
+            .slice(0, 4)
+            .map(({ storeId, storeName }) => ({
+              storeId: String(storeId),
+              storeName: String(storeName),
+            }));
+
+          console.log("Selected stores:");
+          for (const store of stores) {
+            console.log(`- ${store.storeId} | ${store.storeName}`);
+          }
+
+          const matrix = JSON.stringify(stores);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${matrix}\n`);
+          NODE
+
+  scrape:
+    runs-on: ubuntu-latest
+    needs: prepare
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -27,14 +58,27 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps
 
-      - name: Run command
-        run: ${{ inputs.command }}
+      - name: Log selected store
+        run: echo "Scraping storeId=${{ matrix.storeId }} storeName=${{ matrix.storeName }}"
+
+      - name: Run scraper
+        run: node scraper_ct.js --storeId "${{ matrix.storeId }}" --storeName "${{ matrix.storeName }}"
+
+      - name: Set output paths
+        run: |
+          CITY_SLUG=$(node -e "const slugify=require('slugify'); console.log(slugify(process.env.STORE_NAME,{lower:true, strict:true}));")
+          OUT_DIR="outputs/canadiantire/${STORE_ID}-${CITY_SLUG}"
+          echo "CITY_SLUG=$CITY_SLUG" >> $GITHUB_ENV
+          echo "OUT_DIR=$OUT_DIR" >> $GITHUB_ENV
+        env:
+          STORE_ID: ${{ matrix.storeId }}
+          STORE_NAME: ${{ matrix.storeName }}
 
       - name: Upload scraper outputs
         uses: actions/upload-artifact@v4
         with:
-          name: canadiantire-0418-rosemere-qc
+          name: canadiantire-${{ matrix.storeId }}-${{ env.CITY_SLUG }}
           path: |
-            outputs/canadiantire/0418-rosemere-qc/data.json
-            outputs/canadiantire/0418-rosemere-qc/data.csv
+            ${{ env.OUT_DIR }}/data.json
+            ${{ env.OUT_DIR }}/data.csv
           if-no-files-found: warn
