@@ -1439,6 +1439,47 @@ function normalizePaginationBaseUrl(inputUrl) {
   }
 }
 
+function buildPaginationUrl(baseUrl, pageNum) {
+  try {
+    const parsed = new URL(baseUrl, BASE);
+    parsed.searchParams.set("page", String(pageNum));
+    return parsed.toString();
+  } catch {
+    return baseUrl;
+  }
+}
+
+async function navigateToPaginationUrl(page, baseUrl, pageNum, signatureBefore, {
+  debugDir,
+  responseStatus,
+} = {}) {
+  const pageUrl = buildPaginationUrl(baseUrl, pageNum);
+  console.log(`[PAGINATION] Navigation directe vers la page ${pageNum}: ${pageUrl}`);
+  const response = await gotoWithRetries(page, pageUrl, {
+    attempts: 2,
+    waitUntil: "domcontentloaded",
+    networkIdleTimeout: 30000,
+  });
+  const lastResponseStatus = response ? response.status() : responseStatus;
+  await logNavigationDebug(page, { pageNum, responseStatus: lastResponseStatus });
+  await page.waitForLoadState("domcontentloaded", { timeout: 30000 }).catch(() => {});
+  await waitProductsStable(page, 60000);
+  await closeInterferingPopups(page);
+  const signatureChanged = await waitForListingSignatureChange(
+    page,
+    signatureBefore,
+    { timeout: 25000 }
+  );
+  if (!signatureChanged && debugDir) {
+    await savePageDebugArtifacts(page, debugDir, {
+      pageNum,
+      label: "pagination-direct-navigation-stuck",
+      responseStatus: lastResponseStatus,
+    });
+  }
+  return { signatureChanged, responseStatus: lastResponseStatus };
+}
+
 async function scrapeCategoryAllPages(page, storeUrl, storeId, {
   extractPage,
   autoScrollConfig,
@@ -1474,11 +1515,28 @@ async function scrapeCategoryAllPages(page, storeUrl, storeId, {
       }
       let changed = false;
       const maxClickRetries = 3;
+      let attemptedDirectNav = false;
 
       for (let attempt = 1; attempt <= maxClickRetries; attempt += 1) {
         const signatureBefore = await getListingSignature(page);
         const { clicked, reason } = await clickPaginationNext(page, pageNum);
         if (!clicked) {
+          if (!attemptedDirectNav && (reason === "missing-target" || reason === "missing-nav")) {
+            const direct = await navigateToPaginationUrl(
+              page,
+              baseUrl,
+              pageNum,
+              signatureBefore,
+              { debugDir, responseStatus: lastResponseStatus }
+            );
+            lastResponseStatus = direct.responseStatus ?? lastResponseStatus;
+            attemptedDirectNav = true;
+            if (direct.signatureChanged) {
+              changed = true;
+              break;
+            }
+          }
+
           if (reason === "disabled-target" || reason === "missing-target" || reason === "missing-nav") {
             console.log(`[PAGINATION] Stop page ${pageNum}: cible pagination absente/désactivée.`);
             reachedEnd = true;
@@ -1511,6 +1569,21 @@ async function scrapeCategoryAllPages(page, storeUrl, storeId, {
           `[PAGINATION] Page ${pageNum}: signature inchangée après clic (${attempt}/${maxClickRetries}).`
         );
         await page.waitForTimeout(1500);
+        if (!attemptedDirectNav && attempt === maxClickRetries) {
+          const direct = await navigateToPaginationUrl(
+            page,
+            baseUrl,
+            pageNum,
+            signatureBefore,
+            { debugDir, responseStatus: lastResponseStatus }
+          );
+          lastResponseStatus = direct.responseStatus ?? lastResponseStatus;
+          attemptedDirectNav = true;
+          if (direct.signatureChanged) {
+            changed = true;
+            break;
+          }
+        }
       }
 
       if (!changed) {
