@@ -12,16 +12,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build matrix from first 4 stores
+      - name: Build matrix from all stores
         id: build-matrix
         run: |
           node - <<'NODE'
           const fs = require("fs");
           const stores = JSON.parse(
             fs.readFileSync("data/canadian_tire_stores.json", "utf8")
-          )
-            .slice(0, 4)
-            .map(({ storeId, storeName }) => ({
+          ).map(({ storeId, storeName }) => ({
               storeId: String(storeId),
               storeName: String(storeName),
             }));
