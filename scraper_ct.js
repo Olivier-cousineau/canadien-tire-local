@@ -1408,7 +1408,17 @@ async function autoScrollLoadAllProducts(page, {
   await page.evaluate(() => window.scrollTo(0, 0));
 }
 
-async function scrapeStoreAllPages(page, storeUrl, storeId, {
+function normalizePaginationBaseUrl(inputUrl) {
+  try {
+    const parsed = new URL(inputUrl, BASE);
+    parsed.searchParams.delete("page");
+    return parsed.toString();
+  } catch {
+    return inputUrl;
+  }
+}
+
+async function scrapeCategoryAllPages(page, storeUrl, storeId, {
   extractPage,
   autoScrollConfig,
   storeName,
@@ -1421,8 +1431,9 @@ async function scrapeStoreAllPages(page, storeUrl, storeId, {
   let reachedEnd = false;
   let clickFailed = false;
 
-  console.log("➡️  Go to:", storeUrl);
-  const response = await gotoWithRetries(page, storeUrl, {
+  const baseUrl = normalizePaginationBaseUrl(storeUrl);
+  console.log("➡️  Go to:", baseUrl);
+  const response = await gotoWithRetries(page, baseUrl, {
     attempts: 3,
     waitUntil: "domcontentloaded",
     networkIdleTimeout: 30000,
@@ -1759,7 +1770,7 @@ async function scrapeStore(store) {
       maxTotalMs: Number(args.autoScrollMaxTotalMs) || AUTO_SCROLL_DEFAULTS.maxTotalMs,
     };
 
-    const itemsAllPages = await scrapeStoreAllPages(page, storeUrl, storeId, {
+    const itemsAllPages = await scrapeCategoryAllPages(page, storeUrl, storeId, {
       extractPage: (pageNum) => extractProductsOnPage(true, pageNum),
       autoScrollConfig,
       storeName: storeName || city || "",
