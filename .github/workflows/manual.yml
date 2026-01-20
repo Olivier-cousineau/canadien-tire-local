@@ -112,59 +112,43 @@ jobs:
         with:
           path: artifacts
 
-      - name: Unzip artifacts to staging
-        run: |
-          mkdir -p staging
-          shopt -s nullglob
-          for zipfile in artifacts/**/*.zip; do
-            unzip -o "$zipfile" -d staging
-          done
-
       - name: Publish Canadian Tire data
         run: echo "Publish Canadian Tire data"
 
       - name: Rebuild Canadian Tire product index
         run: echo "Rebuild Canadian Tire product index"
 
-      - name: Debug staging and econoplus content
+      - name: Debug artifacts and econoplus content
         run: |
           mkdir -p econoplus/public/canadiantire
           echo "List artifacts contents:"
           find artifacts -maxdepth 4 -print || true
-          echo "List staging contents:"
-          find staging -maxdepth 6 -print || true
-          echo "Find staging public/canadiantire paths:"
-          find staging -path "*/public/canadiantire/*" -print || true
+          echo "Find artifacts outputs/canadiantire paths:"
+          find artifacts -path "*/outputs/canadiantire/*" -print || true
           echo "Find econoplus public/canadiantire:"
           find econoplus/public/canadiantire -print || true
-
-      - name: Unzip artifacts to staging (pre-sync)
-        run: |
-          mkdir -p staging
-          shopt -s nullglob
-          for zipfile in artifacts/**/*.zip; do
-            unzip -o "$zipfile" -d staging
-          done
 
       - name: Sync scraper outputs into ECONOPLUS repo
         run: |
           mkdir -p econoplus/public/canadiantire
           echo "List artifacts contents:"
           find artifacts -maxdepth 4 -print || true
-          echo "List staging contents:"
-          find staging -maxdepth 6 -print || true
-          mapfile -t source_dirs < <(find staging -type d -path "*/public/canadiantire")
+          mapfile -t source_dirs < <(find artifacts -type d -path "*/outputs/canadiantire/*")
           if [ "${#source_dirs[@]}" -eq 0 ]; then
-            echo "No public/canadiantire directories found under staging."
+            echo "No outputs/canadiantire/<storeSlug> directories found under artifacts."
             exit 1
           fi
           if command -v rsync >/dev/null 2>&1; then
             for source_dir in "${source_dirs[@]}"; do
-              rsync -a "${source_dir}/" econoplus/public/canadiantire/
+              store_slug="$(basename "${source_dir}")"
+              mkdir -p "econoplus/public/canadiantire/${store_slug}"
+              rsync -a "${source_dir}/" "econoplus/public/canadiantire/${store_slug}/"
             done
           else
             for source_dir in "${source_dirs[@]}"; do
-              cp -R "${source_dir}/." econoplus/public/canadiantire/
+              store_slug="$(basename "${source_dir}")"
+              mkdir -p "econoplus/public/canadiantire/${store_slug}"
+              cp -R "${source_dir}/." "econoplus/public/canadiantire/${store_slug}/"
             done
           fi
           echo "Files copied into econoplus/public/canadiantire:"
