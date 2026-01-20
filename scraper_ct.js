@@ -200,6 +200,8 @@ const PRICE_SELECTORS = {
     ".nl-price__was s",
     ".nl-price--was",
     ".nl-price__was",
+    "del",
+    "s",
   ],
   priceContainer: [
     "[data-testid='price']",
@@ -349,6 +351,22 @@ async function savePageDebugArtifacts(page, debugDir, { pageNum, label, response
     page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {}),
     page.content().then((content) => fsExtra.writeFile(htmlPath, content)).catch(() => {}),
     fsExtra.writeFile(logPath, logPayload).catch(() => {}),
+  ]);
+}
+
+async function savePagePriceDebugArtifacts(page, debugDir, pageNum) {
+  if (!debugDir) return;
+  await fsExtra.ensureDir(debugDir);
+  const baseName = `page${pageNum}-no-prices`;
+  const screenshotPath = path.join(debugDir, `${baseName}.png`);
+  const htmlPath = path.join(debugDir, `${baseName}.html`);
+  const urlPath = path.join(debugDir, `${baseName}.url.txt`);
+  const finalUrl = page.url();
+
+  await Promise.all([
+    page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {}),
+    page.content().then((content) => fsExtra.writeFile(htmlPath, content)).catch(() => {}),
+    fsExtra.writeFile(urlPath, finalUrl).catch(() => {}),
   ]);
 }
 
@@ -577,63 +595,63 @@ async function scrapeListing(page, { skipGuards = false } = {}) {
       };
 
       return nodes.map((el) => {
-        const titleEl = el.querySelector("[id^='title__promolisting-'], .nl-product-card__title");
-        const title = textFromEl(titleEl);
-        const priceContainer =
-          el.querySelector(
-            "[data-testid='price'], [data-testid='pricing'], .nl-price, .nl-price__container, .c-pricing, .price, .price__value, .nl-price__text"
-          ) || el;
+      const titleEl = el.querySelector("[id^='title__promolisting-'], .nl-product-card__title");
+      const title = textFromEl(titleEl);
+      const pricingRoot =
+        el.querySelector(
+          "[data-testid='price'], [data-testid='pricing'], .nl-price, .nl-price__container, .c-pricing, .price, .price__value, .nl-price__text"
+        ) || el;
 
-        const priceSaleRaw =
-          textFromSelectorList(priceContainer, [
-            "span[data-testid='priceTotal']",
-            "[data-testid='sale-price']",
-            ".nl-price--total",
-            ".nl-price__total",
-            ".price__value",
-            ".c-pricing__current",
-          ]) || textFromSelectorList(el, [
-            "span[data-testid='priceTotal']",
-            "[data-testid='sale-price']",
-            ".nl-price--total",
-            ".nl-price__total",
-            ".price__value",
-            ".c-pricing__current",
-          ]);
+      const priceSaleRaw = textFromSelectorList(pricingRoot, [
+        "span[data-testid='priceTotal']",
+        "[data-testid='sale-price']",
+        ".nl-price--total",
+        ".nl-price__total",
+        ".c-pricing__current",
+        ".price__value",
+      ]);
 
-        const wasSelectors = [
-          "[data-testid='regular-price']",
-          ".nl-price__was s",
-          ".nl-price--was",
-          ".nl-price__was",
-          "s",
-          "del",
-        ];
-        let priceWasRaw = textFromSelectorList(priceContainer, wasSelectors);
+      const wasSelectors = [
+        "[data-testid='regular-price']",
+        ".nl-price__was s",
+        ".nl-price--was",
+        ".nl-price__was",
+        "del",
+        "s",
+      ];
+      let priceWasRaw = textFromSelectorList(pricingRoot, wasSelectors);
 
-        if (!priceWasRaw) {
-          const priceLabel =
-            priceContainer.getAttribute("aria-label") ||
-            priceContainer.getAttribute("title") ||
-            null;
-          if (priceLabel) {
-            const wasMatch = priceLabel.match(/(était|was|regular)[^0-9]*([\d\s.,]+)/i);
-            if (wasMatch) {
-              priceWasRaw = wasMatch[2];
-            }
+      const pricingLabel =
+        pricingRoot.getAttribute("aria-label") ||
+        pricingRoot.getAttribute("title") ||
+        null;
+      if (!priceWasRaw && pricingLabel) {
+        const wasMatch = pricingLabel.match(/(était|was|regular)[^0-9]*([\d\s.,]+)/i);
+        if (wasMatch) {
+          priceWasRaw = wasMatch[2];
+        }
+      }
+
+      let priceSaleLabel = null;
+      if (!priceSaleRaw && pricingLabel) {
+        const saleMatch = pricingLabel.match(/(maintenant|now|sale|price)[^0-9]*([\d\s.,]+)/i);
+        if (saleMatch) {
+          priceSaleLabel = saleMatch[2];
+        }
+      }
+
+      if (!priceWasRaw) {
+        const datasetValues = Object.values(pricingRoot.dataset || {}).join(" ");
+        if (datasetValues) {
+          const wasMatch = datasetValues.match(/(était|was|regular)[^0-9]*([\d\s.,]+)/i);
+          if (wasMatch) {
+            priceWasRaw = wasMatch[2];
           }
         }
+      }
 
-        if (!priceWasRaw) {
-          const datasetValues = Object.values(priceContainer.dataset || {}).join(" ");
-          if (datasetValues) {
-            const wasMatch = datasetValues.match(/(était|was|regular)[^0-9]*([\d\s.,]+)/i);
-            if (wasMatch) {
-              priceWasRaw = wasMatch[2];
-            }
-          }
-        }
-        const price_sale = cleanMoney(priceSaleRaw);
+      const priceSaleFinalRaw = priceSaleRaw || priceSaleLabel || null;
+        const price_sale = cleanMoney(priceSaleFinalRaw);
         const price_original = cleanMoney(priceWasRaw);
 
         const imgEl = el.querySelector(".nl-product-card__image-wrap img");
@@ -672,7 +690,7 @@ async function scrapeListing(page, { skipGuards = false } = {}) {
         return {
           name: title || null,
           price_sale,
-          price_sale_raw: priceSaleRaw || null,
+          price_sale_raw: priceSaleFinalRaw || null,
           price_original,
           price_original_raw: priceWasRaw || null,
           image: image || null,
@@ -1517,13 +1535,8 @@ async function scrapeStoreAllPages(page, storeUrl, storeId, {
         let validated = await waitForStoreApplied(page, targetStoreId, storeName);
         if (!validated) {
           console.warn(
-            `[STORE] Store non confirmé via l'URL (${targetStoreId}) → rechargement.`
+            `[STORE] Store non confirmé via l'URL (${targetStoreId}).`
           );
-          await page.goto(pageUrl, { timeout: 120000, waitUntil: "domcontentloaded" }).catch(() => {});
-          validated = await waitForStoreApplied(page, targetStoreId, storeName);
-        }
-        if (!validated) {
-          console.warn(`[STORE] Store non confirmé après rechargement (${targetStoreId}).`);
         }
       }
       storeInitialized = true;
@@ -1544,13 +1557,27 @@ async function scrapeStoreAllPages(page, storeUrl, storeId, {
     await lazyWarmup(page);
     await autoScrollLoadAllProducts(page, autoScrollConfig);
 
-    const { records, totalProducts, rawCount, productKeys } = await extractPage(pageNum);
-    console.log(`[PAGINATION] Page ${pageNum}: ${records.length} items extraits`);
+    const {
+      records,
+      totalProducts,
+      rawCount,
+      productKeys,
+      cardsDetected,
+      withAnyPrice,
+      withBothPrices,
+      deals50,
+    } = await extractPage(pageNum);
+    console.log(
+      `[PAGINATION] Page ${pageNum}: items extraits=${cardsDetected ?? rawCount ?? 0} ` +
+      `cardsDetected=${cardsDetected ?? 0} withAnyPrice=${withAnyPrice ?? 0} ` +
+      `withBothPrices=${withBothPrices ?? 0} deals50=${deals50 ?? 0}`
+    );
 
     items.push(...records);
 
     let stopReason = null;
-    if (!totalProducts || totalProducts <= 0) {
+    const detected = cardsDetected ?? totalProducts ?? 0;
+    if (!detected || detected <= 0) {
       stopReason = "aucun produit sur la page";
     } else if (!rawCount || rawCount <= 0) {
       emptyPageStreak += 1;
@@ -1643,7 +1670,12 @@ async function scrapeStore(store) {
       const productKeysSet = new Set();
       const records = [];
       const debugSamples = [];
-      let shouldSaveDebugPage = false;
+      const stats = {
+        cardsDetected: cards.length,
+        withAnyPrice: 0,
+        withBothPrices: 0,
+        deals50: 0,
+      };
 
       for (const card of cards) {
         const availabilityKeys = buildCtKeysFromAvailability(card.availability);
@@ -1681,12 +1713,23 @@ async function scrapeStore(store) {
           null
         );
 
+        if (regularPriceForCheck != null || salePriceForCheck != null) {
+          stats.withAnyPrice += 1;
+          if (regularPriceForCheck != null && salePriceForCheck != null) {
+            stats.withBothPrices += 1;
+          }
+        }
+
         const discountPercent = computeDiscountPercent(
           regularPriceForCheck,
           salePriceForCheck
         );
 
-        if (args.debug && debugSamples.length < 10) {
+        if (discountPercent != null && discountPercent >= 50) {
+          stats.deals50 += 1;
+        }
+
+        if (debugSamples.length < 10) {
           const saleRaw = card.price_sale_raw ?? card.price_sale ?? null;
           const wasRaw = card.price_original_raw ?? card.price_original ?? null;
           const saleNum = extractPrice(saleRaw ?? undefined);
@@ -1702,16 +1745,9 @@ async function scrapeStore(store) {
             discount: discount ?? null,
             url: card.link || null,
           });
-
-          if (!saleRaw || !wasRaw) {
-            shouldSaveDebugPage = true;
-          }
         }
 
-        if (
-          discountPercent == null ||
-          discountPercent < 50
-        ) {
+        if (discountPercent == null || discountPercent < 50) {
           continue;
         }
         const record = createRecordFromCard(
@@ -1725,7 +1761,11 @@ async function scrapeStore(store) {
         }
       }
 
-      if (args.debug) {
+      const needsPriceDebug =
+        stats.cardsDetected > 0 &&
+        (stats.withAnyPrice === 0 || (pageNum === 1 && stats.deals50 === 0));
+
+      if (needsPriceDebug) {
         const pageLabel = pageNum != null ? `page ${pageNum}` : "page";
         console.log(`[DEBUG] ${pageLabel} – premières cartes (max 10):`);
         debugSamples.forEach((sample, index) => {
@@ -1743,20 +1783,21 @@ async function scrapeStore(store) {
           );
         });
 
-        if (shouldSaveDebugPage && debugDir) {
-          await savePageDebugArtifacts(page, debugDir, {
-            pageNum: pageNum ?? 0,
-            label: "missing-price",
-          });
+        if (debugDir) {
+          await savePagePriceDebugArtifacts(page, debugDir, pageNum ?? 0);
         }
       }
 
       return {
         records,
-        totalProducts: cards.length,
-        rawCount: cards.length,
+        totalProducts: stats.cardsDetected,
+        rawCount: stats.cardsDetected,
         productKeys: productKeysSet,
         accepted: records.length,
+        cardsDetected: stats.cardsDetected,
+        withAnyPrice: stats.withAnyPrice,
+        withBothPrices: stats.withBothPrices,
+        deals50: stats.deals50,
       };
     };
 
