@@ -28,21 +28,15 @@ const __dirname = path.dirname(__filename);
 
 function safeLoadStores() {
   const primaryPath = path.join(__dirname, "data", "canadian_tire_stores.json");
-  const fallbackPath = path.join(__dirname, "data", "stores.json");
 
   if (fs.existsSync(primaryPath)) {
-    return JSON.parse(fs.readFileSync(primaryPath, "utf8"));
+    return {
+      stores: JSON.parse(fs.readFileSync(primaryPath, "utf8")),
+      path: primaryPath,
+    };
   }
 
-  if (fs.existsSync(fallbackPath)) {
-    console.warn(`[SCRAPER] Fallback stores.json utilisé: ${fallbackPath}`);
-    return JSON.parse(fs.readFileSync(fallbackPath, "utf8"));
-  }
-
-  console.warn(
-    `[SCRAPER] Aucun fichier de stores trouvé (${primaryPath} ou ${fallbackPath}).`
-  );
-  return [];
+  return { stores: [], path: primaryPath };
 }
 
 // TASK FOR CODEX:
@@ -89,18 +83,44 @@ const args = minimist(process.argv.slice(2), {
 const storeIdCLI = args.storeId != null ? String(args.storeId) : "";
 const storeNameCLI = args.storeName != null ? String(args.storeName) : "";
 
-let allStores = safeLoadStores();
+const { stores: loadedStores, path: storesFilePath } = safeLoadStores();
+let allStores = loadedStores;
 
 if (allStores.length === 0) {
   if (storeIdCLI) {
+    console.warn(
+      `[SCRAPER] Fichier stores introuvable (${storesFilePath}). Utilisation du storeId CLI.`
+    );
     allStores = [{ id: storeIdCLI, name: storeNameCLI }];
   } else {
-    console.error("Aucun fichier stores et aucun --storeId fourni");
+    console.error(
+      `[SCRAPER] Fichier stores introuvable (${storesFilePath}) et aucun --storeId fourni.`
+    );
     process.exit(1);
   }
+} else {
+  console.log(
+    `[SCRAPER] Total stores dans le fichier (${storesFilePath}) : ${allStores.length}`
+  );
 }
 
 let storesToProcess = allStores;
+
+if (!storeIdCLI) {
+  const storesToRun = allStores.slice(0, 4);
+  console.log(
+    `[SCRAPER] Magasins sélectionnés (par défaut) : ${storesToRun.length}`
+  );
+  const selectedList = storesToRun.map((store) => {
+    const id = store.storeId ?? store.id ?? "?";
+    const name = store.storeName ?? store.city ?? store.name ?? "";
+    return `${id} – ${name}`.trim();
+  });
+  if (selectedList.length) {
+    console.log(`[SCRAPER] Liste sélectionnée: ${selectedList.join(", ")}`);
+  }
+  storesToProcess = storesToRun;
+}
 
 const rawShardIndex = process.env.SHARD_INDEX;
 const rawTotalShards = process.env.TOTAL_SHARDS;
@@ -111,11 +131,11 @@ const totalShards = rawTotalShards ? parseInt(rawTotalShards, 10) : 0;
 let stopRequested = false;
 
 if (!Number.isFinite(shardIndex) || !Number.isFinite(totalShards) || totalShards <= 0) {
-  console.log("[SHARD] Pas de sharding –", allStores.length, "magasins.");
-  storesToProcess = allStores;
+  console.log("[SHARD] Pas de sharding –", storesToProcess.length, "magasins.");
+  storesToProcess = storesToProcess;
 } else {
   // Nombre max de magasins par shard (≈8 si 340 magasins / 43 shards)
-  const maxPerShard = Math.ceil(allStores.length / totalShards);
+  const maxPerShard = Math.ceil(storesToProcess.length / totalShards);
 
   // Sécurité : on limite à 8 magasins par shard même si totalShards change
   const storesPerShard = Math.min(maxPerShard, 8);
@@ -124,9 +144,9 @@ if (!Number.isFinite(shardIndex) || !Number.isFinite(totalShards) || totalShards
   const zeroBasedIndex = Math.max(0, shardIndex - 1);
 
   const start = zeroBasedIndex * storesPerShard;
-  const end = Math.min(start + storesPerShard, allStores.length);
+  const end = Math.min(start + storesPerShard, storesToProcess.length);
 
-  storesToProcess = allStores.slice(start, end);
+  storesToProcess = storesToProcess.slice(start, end);
 
   console.log(
     `[SHARD] Shard ${shardIndex}/${totalShards} – magasins index ${start} à ${end - 1} (total: ${storesToProcess.length})`
