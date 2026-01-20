@@ -163,7 +163,11 @@ const INCLUDE_LIQUIDATION_PRICE= parseBooleanArg(args["include-liquidation-price
 const BASE = "https://www.canadiantire.ca";
 
 const SELECTORS = {
-  card: "li[data-testid='product-grids']",
+  card: [
+    "li[data-testid='product-grids']",
+    "article:has(a[href*='/p/'])",
+    ".nl-product-card",
+  ].join(", "),
 };
 
 const AUTO_SCROLL_DEFAULTS = {
@@ -241,17 +245,103 @@ async function dismissMedalliaPopup(page) {
   }
 }
 
-async function waitProductsStable(page, timeout = 15000) {
+async function closeCookieBanner(page) {
+  const selectors = [
+    "button:has-text('Accepter')",
+    "button:has-text('Accepter tout')",
+    "button:has-text('Tout accepter')",
+    "button:has-text('Accept')",
+    "button:has-text('Accept all')",
+    "button[aria-label*='accepter' i]",
+    "button[aria-label*='accept' i]",
+  ];
+  for (const sel of selectors) {
+    try {
+      const loc = page.locator(sel).first();
+      if (await loc.isVisible().catch(() => false)) {
+        await loc.click({ timeout: 2000 }).catch(() => {});
+        await page.waitForTimeout(300);
+        break;
+      }
+    } catch {}
+  }
+}
+
+async function closeInterferingPopups(page) {
+  await Promise.allSettled([
+    dismissMedalliaPopup(page),
+    closeCookieBanner(page),
+    maybeCloseStoreModal(page),
+  ]);
+}
+
+function hasPageParam(urlStr, pageNum) {
   try {
-    // On attend que les produits soient présents dans le DOM (moins strict que "visible")
-    await page.waitForSelector('li[data-testid="product-grids"]', {
-      state: 'attached',
+    const url = new URL(urlStr, BASE);
+    return url.searchParams.get("page") === String(pageNum);
+  } catch {
+    return false;
+  }
+}
+
+async function savePageDebugArtifacts(page, debugDir, { pageNum, label, responseStatus } = {}) {
+  if (!debugDir) return;
+  await fsExtra.ensureDir(debugDir);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const baseName = `page-${pageNum}-${label || "debug"}-${timestamp}`;
+  const screenshotPath = path.join(debugDir, `${baseName}.png`);
+  const htmlPath = path.join(debugDir, `${baseName}.html`);
+  const logPath = path.join(debugDir, `${baseName}.log`);
+
+  const finalUrl = page.url();
+  const hasPage = hasPageParam(finalUrl, pageNum);
+  const logPayload = [
+    `pageNum=${pageNum}`,
+    `label=${label || "debug"}`,
+    `url=${finalUrl}`,
+    `hasPageParam=${hasPage}`,
+    `status=${responseStatus ?? "n/a"}`,
+  ].join("\n");
+
+  await Promise.all([
+    page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {}),
+    page.content().then((content) => fsExtra.writeFile(htmlPath, content)).catch(() => {}),
+    fsExtra.writeFile(logPath, logPayload).catch(() => {}),
+  ]);
+}
+
+async function waitProductsStableWithRetries(page, {
+  timeout = 60000,
+  retries = 2,
+  pageNum = 1,
+  debugDir,
+  responseStatus,
+} = {}) {
+  for (let attempt = 1; attempt <= retries + 1; attempt += 1) {
+    const ok = await waitProductsStable(page, timeout);
+    if (ok) return true;
+    console.warn(`[PAGINATION] Produits non stables (tentative ${attempt}/${retries + 1}).`);
+    if (attempt <= retries) {
+      await page.waitForTimeout(2000);
+      await closeInterferingPopups(page);
+    } else if (debugDir) {
+      await savePageDebugArtifacts(page, debugDir, {
+        pageNum,
+        label: "wait-products-failed",
+        responseStatus,
+      });
+    }
+  }
+  return false;
+}
+async function waitProductsStable(page, timeout = 60000) {
+  try {
+    await page.waitForSelector(SELECTORS.card, {
+      state: "attached",
       timeout,
     });
 
-    // Petit délai pour laisser le layout se stabiliser
     await page.waitForTimeout(300);
-
     return true;
   } catch (err) {
     console.warn(
@@ -577,30 +667,21 @@ async function waitForPaginationPage(page, pageNum) {
   }
 }
 
-async function navigateToPaginationPage(page, pageNum, fallbackUrl) {
-  if (pageNum === 1) {
-    await page.goto(fallbackUrl, { timeout: 120000, waitUntil: "domcontentloaded" });
-    return;
+async function getCurrentPaginationPage(page) {
+  try {
+    const text = await page.locator(SEL.currentPage).first().textContent();
+    if (!text) return null;
+    const num = Number.parseInt(text.trim(), 10);
+    return Number.isFinite(num) ? num : null;
+  } catch {
+    return null;
   }
+}
 
+async function clickPaginationNext(page) {
   const nav = page.locator(SEL.paginationNav).first();
   const navVisible = await nav.isVisible().catch(() => false);
-  if (!navVisible) {
-    console.warn(`[PAGINATION] Pagination introuvable → fallback URL ${fallbackUrl}`);
-    await page.goto(fallbackUrl, { timeout: 120000, waitUntil: "domcontentloaded" });
-    return;
-  }
-
-  const pageButton = nav
-    .locator("a,button")
-    .filter({ hasText: new RegExp(`^\\s*${pageNum}\\s*$`) })
-    .first();
-
-  if (await pageButton.isVisible().catch(() => false)) {
-    await pageButton.click({ timeout: 5000 }).catch(() => {});
-    const ok = await waitForPaginationPage(page, pageNum);
-    if (ok) return;
-  }
+  if (!navVisible) return false;
 
   const nextButton = nav
     .locator(
@@ -621,12 +702,62 @@ async function navigateToPaginationPage(page, pageNum, fallbackUrl) {
 
   if (await nextButton.isVisible().catch(() => false)) {
     await nextButton.click({ timeout: 5000 }).catch(() => {});
-    const ok = await waitForPaginationPage(page, pageNum);
-    if (ok) return;
+    return true;
+  }
+  return false;
+}
+
+async function clickPaginationToPage(page, pageNum, { maxSteps = 10 } = {}) {
+  const nav = page.locator(SEL.paginationNav).first();
+  const navVisible = await nav.isVisible().catch(() => false);
+  if (!navVisible) return false;
+
+  const pageButton = nav
+    .locator("a,button")
+    .filter({ hasText: new RegExp(`^\\s*${pageNum}\\s*$`) })
+    .first();
+
+  if (await pageButton.isVisible().catch(() => false)) {
+    await pageButton.click({ timeout: 5000 }).catch(() => {});
+    return waitForPaginationPage(page, pageNum);
   }
 
-  console.warn(`[PAGINATION] Navigation par clic impossible → fallback URL ${fallbackUrl}`);
-  await page.goto(fallbackUrl, { timeout: 120000, waitUntil: "domcontentloaded" });
+  let current = await getCurrentPaginationPage(page);
+  let steps = 0;
+  while (steps < maxSteps && (current == null || current < pageNum)) {
+    const clicked = await clickPaginationNext(page);
+    if (!clicked) return false;
+    await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
+    await closeInterferingPopups(page);
+    const ok = await waitForPaginationPage(page, pageNum);
+    if (ok) return true;
+    current = await getCurrentPaginationPage(page);
+    steps += 1;
+  }
+
+  return false;
+}
+
+async function gotoWithRetries(page, url, {
+  attempts = 3,
+  waitUntil = "domcontentloaded",
+  networkIdleTimeout = 30000,
+} = {}) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await page.goto(url, { timeout: 120000, waitUntil });
+      await page.waitForLoadState("networkidle", { timeout: networkIdleTimeout }).catch(() => {});
+      await closeInterferingPopups(page);
+      return response || null;
+    } catch (err) {
+      lastError = err;
+      console.warn(`[NAV] goto failed (${attempt}/${attempts}) → ${err?.message || err}`);
+      await page.waitForTimeout(2000);
+    }
+  }
+  if (lastError) throw lastError;
+  return null;
 }
 
 function buildStableDedupKey(record) {
@@ -1185,6 +1316,8 @@ async function scrapeStoreAllPages(page, storeUrl, storeId, {
   let storeInitialized = false;
   let emptyPageStreak = 0;
   const EMPTY_STREAK_LIMIT = 2;
+  let useClickPagination = false;
+  let lastResponseStatus = null;
 
   for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
     if (hasReachedTimeLimit()) {
@@ -1195,19 +1328,40 @@ async function scrapeStoreAllPages(page, storeUrl, storeId, {
     const pageUrl = withPageParam(storeUrl, pageNum);
     console.log("➡️  Go to:", pageUrl);
 
-    let retries = 3;
-    while (retries > 0) {
-      try {
-        await navigateToPaginationPage(page, pageNum, pageUrl);
-        break;
-      } catch (e) {
-        if (--retries === 0) throw e;
-        console.log("Retrying page load...");
-        await page.waitForTimeout(3000);
+    if (pageNum === 1 || !useClickPagination) {
+      const response = await gotoWithRetries(page, pageUrl, {
+        attempts: 3,
+        waitUntil: "domcontentloaded",
+        networkIdleTimeout: 30000,
+      });
+      lastResponseStatus = response ? response.status() : null;
+      console.log(`[NAV] Final URL after goto: ${page.url()}`);
+      if (lastResponseStatus != null) {
+        console.log(`[NAV] HTTP status: ${lastResponseStatus}`);
+      }
+      const hasParam = hasPageParam(page.url(), pageNum);
+      console.log(`[NAV] page param present: ${hasParam}`);
+      if (pageNum > 1 && !hasParam) {
+        console.warn(
+          `[NAV] Paramètre page ignoré (page=${pageNum}) → bascule en pagination par clic.`
+        );
+        useClickPagination = true;
       }
     }
 
-    await maybeCloseStoreModal(page);
+    if (useClickPagination && pageNum > 1) {
+      const clicked = await clickPaginationToPage(page, pageNum, { maxSteps: 15 });
+      if (!clicked) {
+        console.warn(`[PAGINATION] Impossible d'atteindre page ${pageNum} via clic.`);
+        await savePageDebugArtifacts(page, debugDir, {
+          pageNum,
+          label: "click-pagination-failed",
+          responseStatus: lastResponseStatus,
+        });
+      }
+      await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
+      await closeInterferingPopups(page);
+    }
 
     if (!storeInitialized) {
       const m = pageUrl.match(/[?&]store=(\d+)/);
@@ -1232,10 +1386,15 @@ async function scrapeStoreAllPages(page, storeUrl, storeId, {
       storeInitialized = true;
     }
 
-    const isStable = await waitProductsStable(page);
+    const isStable = await waitProductsStableWithRetries(page, {
+      timeout: 60000,
+      retries: 2,
+      pageNum,
+      debugDir,
+      responseStatus: lastResponseStatus,
+    });
     if (!isStable) {
-      console.log(`[PAGINATION] Stop page ${pageNum}: page instable ou timeout.`);
-      break;
+      console.log(`[PAGINATION] Page ${pageNum}: produits non détectés après retries.`);
     }
 
     await lazyWarmup(page);
