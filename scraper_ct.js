@@ -75,48 +75,72 @@ function safeLoadStores() {
 // the current store (including 218 St. Eustache), and will not reuse Rosemere's paths.
 
 const args = minimist(process.argv.slice(2), {
-  string: ["storeId", "storeName", "outBase", "maxPages", "concurrency"],
+  string: ["storeId", "storeName", "outBase", "maxPages", "concurrency", "storesFile"],
   boolean: ["debug", "headful", "downloadImages"],
   default: { maxPages: "120", concurrency: "4" },
 });
 
 const storeIdCLI = args.storeId != null ? String(args.storeId) : "";
 const storeNameCLI = args.storeName != null ? String(args.storeName) : "";
+const storesFileCLI = args.storesFile != null ? String(args.storesFile) : "";
 
 const { stores: loadedStores, path: storesFilePath } = safeLoadStores();
 let allStores = loadedStores;
+let storesToProcess = [];
 
-if (allStores.length === 0) {
-  if (storeIdCLI) {
-    console.warn(
-      `[SCRAPER] Fichier stores introuvable (${storesFilePath}). Utilisation du storeId CLI.`
+if (storesFileCLI) {
+  try {
+    const rawStores = JSON.parse(fs.readFileSync(storesFileCLI, "utf8"));
+    if (!Array.isArray(rawStores)) {
+      throw new Error("Le fichier storesFile doit contenir un tableau JSON.");
+    }
+    storesToProcess = rawStores.map((store) => ({
+      storeId: String(store.storeId ?? store.id ?? ""),
+      storeName: String(store.storeName ?? store.name ?? store.city ?? ""),
+    }));
+    console.log(
+      `[SCRAPER] Mode shard list: ${storesToProcess.length} magasins depuis ${storesFileCLI}`
     );
-    allStores = [{ id: storeIdCLI, name: storeNameCLI }];
-  } else {
+  } catch (error) {
     console.error(
-      `[SCRAPER] Fichier stores introuvable (${storesFilePath}) et aucun --storeId fourni.`
+      `[SCRAPER] Impossible de lire --storesFile (${storesFileCLI}):`,
+      error
     );
     process.exit(1);
   }
 } else {
-  console.log(
-    `[SCRAPER] Total stores dans le fichier (${storesFilePath}) : ${allStores.length}`
-  );
-}
+  if (allStores.length === 0) {
+    if (storeIdCLI) {
+      console.warn(
+        `[SCRAPER] Fichier stores introuvable (${storesFilePath}). Utilisation du storeId CLI.`
+      );
+      allStores = [{ id: storeIdCLI, name: storeNameCLI }];
+    } else {
+      console.error(
+        `[SCRAPER] Fichier stores introuvable (${storesFilePath}) et aucun --storeId fourni.`
+      );
+      process.exit(1);
+    }
+  } else {
+    console.log(
+      `[SCRAPER] Total stores dans le fichier (${storesFilePath}) : ${allStores.length}`
+    );
+  }
 
-let storesToProcess = allStores;
+  storesToProcess = allStores;
 
-if (!storeIdCLI) {
-  console.log(
-    `[SCRAPER] Magasins sélectionnés (par défaut) : ${storesToProcess.length}`
-  );
-  const selectedList = storesToProcess.map((store) => {
-    const id = store.storeId ?? store.id ?? "?";
-    const name = store.storeName ?? store.city ?? store.name ?? "";
-    return `${id} – ${name}`.trim();
-  });
-  if (selectedList.length) {
-    console.log(`[SCRAPER] Liste sélectionnée: ${selectedList.join(", ")}`);
+  if (!storeIdCLI) {
+    console.log(
+      `[SCRAPER] Magasins sélectionnés (par défaut) : ${storesToProcess.length}`
+    );
+    const selectedList = storesToProcess.map((store) => {
+      const id = store.storeId ?? store.id ?? "?";
+      const name = store.storeName ?? store.city ?? store.name ?? "";
+      return `${id} – ${name}`.trim();
+    });
+    if (selectedList.length) {
+      console.log(`[SCRAPER] Liste sélectionnée: ${selectedList.join(", ")}`);
+    }
   }
 }
 
@@ -128,27 +152,33 @@ const shardIndex = rawShardIndex ? parseInt(rawShardIndex, 10) : 0;
 const totalShards = rawTotalShards ? parseInt(rawTotalShards, 10) : 0;
 let stopRequested = false;
 
-if (!Number.isFinite(shardIndex) || !Number.isFinite(totalShards) || totalShards <= 0) {
-  console.log("[SHARD] Pas de sharding –", storesToProcess.length, "magasins.");
-  storesToProcess = storesToProcess;
-} else {
-  // Nombre max de magasins par shard (≈8 si 340 magasins / 43 shards)
-  const maxPerShard = Math.ceil(storesToProcess.length / totalShards);
+if (!storesFileCLI) {
+  if (
+    !Number.isFinite(shardIndex)
+    || !Number.isFinite(totalShards)
+    || totalShards <= 0
+  ) {
+    console.log("[SHARD] Pas de sharding –", storesToProcess.length, "magasins.");
+    storesToProcess = storesToProcess;
+  } else {
+    // Nombre max de magasins par shard (≈8 si 340 magasins / 43 shards)
+    const maxPerShard = Math.ceil(storesToProcess.length / totalShards);
 
-  // Sécurité : on limite à 8 magasins par shard même si totalShards change
-  const storesPerShard = Math.min(maxPerShard, 8);
+    // Sécurité : on limite à 8 magasins par shard même si totalShards change
+    const storesPerShard = Math.min(maxPerShard, 8);
 
-  // shardIndex est 1-based, on convertit en 0-based
-  const zeroBasedIndex = Math.max(0, shardIndex - 1);
+    // shardIndex est 1-based, on convertit en 0-based
+    const zeroBasedIndex = Math.max(0, shardIndex - 1);
 
-  const start = zeroBasedIndex * storesPerShard;
-  const end = Math.min(start + storesPerShard, storesToProcess.length);
+    const start = zeroBasedIndex * storesPerShard;
+    const end = Math.min(start + storesPerShard, storesToProcess.length);
 
-  storesToProcess = storesToProcess.slice(start, end);
+    storesToProcess = storesToProcess.slice(start, end);
 
-  console.log(
-    `[SHARD] Shard ${shardIndex}/${totalShards} – magasins index ${start} à ${end - 1} (total: ${storesToProcess.length})`
-  );
+    console.log(
+      `[SHARD] Shard ${shardIndex}/${totalShards} – magasins index ${start} à ${end - 1} (total: ${storesToProcess.length})`
+    );
+  }
 }
 
 const parsedConcurrency = Number.parseInt(String(args.concurrency), 10);
@@ -156,7 +186,7 @@ const CONCURRENCY = Number.isFinite(parsedConcurrency) && parsedConcurrency > 0
   ? parsedConcurrency
   : 4;
 
-const storeFilter = args.store || args.storeId || null;
+const storeFilter = !storesFileCLI ? (args.store || args.storeId || null) : null;
 if (storeFilter) {
   storesToProcess = storesToProcess.filter(
     (store) =>
