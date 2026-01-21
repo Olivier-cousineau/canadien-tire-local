@@ -171,21 +171,42 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p econoplus/public/canadiantire
-          copied=0
-          if [ -d artifacts ]; then
-            while IFS= read -r -d '' json; do
-              store_dir="$(dirname "$json")"
-              store_slug="$(basename "$store_dir")"
-              mkdir -p "econoplus/public/canadiantire/${store_slug}"
-              cp -R "${store_dir}/." "econoplus/public/canadiantire/${store_slug}/"
-              copied=$((copied + 1))
-            done < <(find artifacts -type f -name "data.json" -print0)
-          else
+          output_dir="econoplus/public/canadiantire"
+          copied_files=0
+          found_store_dirs=0
+
+          if [ ! -d artifacts ]; then
             echo "Warning: artifacts directory is missing."
+            exit 0
           fi
 
-          if [ "$copied" -eq 0 ]; then
-            echo "Warning: No data.json files found under artifacts."
+          while IFS= read -r -d '' store_dir; do
+            found_store_dirs=1
+            store_slug="$(basename "$store_dir")"
+            json_path="${store_dir}/data.json"
+            csv_path="${store_dir}/data.csv"
+
+            if [ -f "$json_path" ]; then
+              cp "$json_path" "${output_dir}/${store_slug}.json"
+              copied_files=$((copied_files + 1))
+            else
+              echo "Warning: Missing data.json for ${store_slug} (${store_dir})."
+            fi
+
+            if [ -f "$csv_path" ]; then
+              cp "$csv_path" "${output_dir}/${store_slug}.csv"
+              copied_files=$((copied_files + 1))
+            else
+              echo "Warning: Missing data.csv for ${store_slug} (${store_dir})."
+            fi
+          done < <(find artifacts -mindepth 2 -maxdepth 2 -type d -path "artifacts/canadiantire-shard-*/*" -print0)
+
+          if [ "$found_store_dirs" -eq 0 ]; then
+            echo "Warning: No store directories found under artifacts/canadiantire-shard-*."
+          fi
+
+          if [ "$copied_files" -eq 0 ]; then
+            echo "Warning: No data.json or data.csv files were copied."
             echo "Artifacts contents (max depth 4):"
             find artifacts -maxdepth 4 -print || true
           fi
