@@ -171,25 +171,21 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p econoplus/public/canadiantire
-          store_dirs=()
-          while IFS= read -r -d '' dir; do
-            if [ -f "${dir}/data.json" ]; then
-              store_dirs+=("$dir")
-            fi
-          done < <(find artifacts -mindepth 3 -maxdepth 3 -type d -print0)
+          copied=0
+          while IFS= read -r -d '' json; do
+            store_dir="$(dirname "$json")"
+            store_slug="$(basename "$store_dir")"
+            mkdir -p "econoplus/public/canadiantire/${store_slug}"
+            cp -R "${store_dir}/." "econoplus/public/canadiantire/${store_slug}/"
+            copied=$((copied + 1))
+          done < <(find artifacts -type f -name "data.json" -print0)
 
-          if [ "${#store_dirs[@]}" -eq 0 ]; then
-            echo "No store directories with data.json found under artifacts."
+          if [ "$copied" -eq 0 ]; then
+            echo "No data.json files found under artifacts."
             echo "Artifacts contents (max depth 4):"
             find artifacts -maxdepth 4 -print || true
             exit 1
           fi
-
-          for store_dir in "${store_dirs[@]}"; do
-            store_slug="$(basename "$store_dir")"
-            mkdir -p "econoplus/public/canadiantire/${store_slug}"
-            cp -R "${store_dir}/." "econoplus/public/canadiantire/${store_slug}/"
-          done
 
       - name: Debug ECONOPLUS git status
         working-directory: econoplus
