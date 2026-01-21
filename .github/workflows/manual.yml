@@ -145,7 +145,7 @@ jobs:
           ref: main
           path: econoplus
 
-      - name: Download scraper outputs
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -172,29 +172,12 @@ jobs:
           set -euo pipefail
           mkdir -p econoplus/public/canadiantire
 
-          echo "Scanning artifacts for store outputs (data.json)..."
-          mapfile -t json_files < <(find artifacts -type f -name "data.json" | sort)
-
-          echo "Found ${#json_files[@]} data.json files"
-          if [ "${#json_files[@]}" -eq 0 ]; then
-            echo "No data.json found under artifacts. Nothing to publish."
-            exit 1
-          fi
-
-          for json in "${json_files[@]}"; do
+          find artifacts -type f -name "data.json" | while read -r json; do
             store_dir="$(dirname "$json")"
             store_slug="$(basename "$store_dir")"
-
             mkdir -p "econoplus/public/canadiantire/${store_slug}"
-            if command -v rsync >/dev/null 2>&1; then
-              rsync -a "${store_dir}/" "econoplus/public/canadiantire/${store_slug}/"
-            else
-              cp -R "${store_dir}/." "econoplus/public/canadiantire/${store_slug}/"
-            fi
+            cp -R "${store_dir}/." "econoplus/public/canadiantire/${store_slug}/"
           done
-
-          echo "Copied files (sample):"
-          find econoplus/public/canadiantire -maxdepth 2 -type f | head -n 50 || true
 
       - name: Debug ECONOPLUS git status
         working-directory: econoplus
