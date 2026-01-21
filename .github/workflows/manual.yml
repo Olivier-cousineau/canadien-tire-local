@@ -172,27 +172,41 @@ jobs:
           set -euo pipefail
           mkdir -p econoplus/public/canadiantire
           copied=0
-          while IFS= read -r -d '' json; do
-            store_dir="$(dirname "$json")"
-            store_slug="$(basename "$store_dir")"
-            mkdir -p "econoplus/public/canadiantire/${store_slug}"
-            cp -R "${store_dir}/." "econoplus/public/canadiantire/${store_slug}/"
-            copied=$((copied + 1))
-          done < <(find artifacts -type f -name "data.json" -print0)
+          if [ -d artifacts ]; then
+            while IFS= read -r -d '' json; do
+              store_dir="$(dirname "$json")"
+              store_slug="$(basename "$store_dir")"
+              mkdir -p "econoplus/public/canadiantire/${store_slug}"
+              cp -R "${store_dir}/." "econoplus/public/canadiantire/${store_slug}/"
+              copied=$((copied + 1))
+            done < <(find artifacts -type f -name "data.json" -print0)
+          else
+            echo "Warning: artifacts directory is missing."
+          fi
 
           if [ "$copied" -eq 0 ]; then
-            echo "No data.json files found under artifacts."
+            echo "Warning: No data.json files found under artifacts."
             echo "Artifacts contents (max depth 4):"
             find artifacts -maxdepth 4 -print || true
-            exit 1
           fi
 
       - name: Debug ECONOPLUS git status
         working-directory: econoplus
         run: git status --porcelain
 
+      - name: Detect ECONOPLUS changes
+        id: econoplus-changes
+        working-directory: econoplus
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Commit & push
         working-directory: econoplus
+        if: steps.econoplus-changes.outputs.has_changes == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
