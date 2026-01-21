@@ -1,0 +1,122 @@
+name: Canadian Tire orchestrator
+
+on:
+  workflow_dispatch:
+    inputs:
+      group:
+        description: Groupe à traiter (A ou B)
+        required: true
+        default: A
+        type: choice
+        options:
+          - A
+          - B
+
+jobs:
+  shard:
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard_index:
+          - "1"
+          - "2"
+          - "3"
+          - "4"
+          - "5"
+          - "6"
+          - "7"
+          - "8"
+          - "9"
+          - "10"
+    uses: ./.github/workflows/ct_shard.yml
+    with:
+      group: ${{ inputs.group }}
+      shard_index: ${{ matrix.shard_index }}
+
+  publish-to-econoplus:
+    runs-on: ubuntu-latest
+    needs: shard
+    concurrency:
+      group: econoplus-publish-canadiantire
+      cancel-in-progress: false
+    steps:
+      - name: Checkout ECONOPLUS repository
+        uses: actions/checkout@v4
+        with:
+          repository: Olivier-cousineau/econoplus
+          token: ${{ secrets.ECONOPLUS }}
+          ref: main
+          path: econoplus
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: canadiantire-${{ inputs.group }}-*
+
+      - name: Debug artifact folders
+        run: |
+          set -euo pipefail
+          echo "Listing artifacts tree (maxdepth 6):"
+          find artifacts -maxdepth 6 -print
+          if [ -z "$(find artifacts -mindepth 1 -maxdepth 6 -print -quit)" ]; then
+            echo "::error::Artifacts folder is empty."
+            exit 1
+          fi
+
+      - name: Sync scraper outputs into econoplus repo
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p econoplus/public/canadiantire
+
+          echo "Artifacts tree (maxdepth 8):"
+          find artifacts -maxdepth 8 -print
+
+          mapfile -t DATA_FILES < <(find artifacts -type f -path "*/public/canadiantire/*/data.json" -print | sort)
+          if [ "${#DATA_FILES[@]}" -eq 0 ]; then
+            echo "No public/canadiantire data.json found. Falling back to artifacts/**/data.json"
+            mapfile -t DATA_FILES < <(find artifacts -type f -name "data.json" -print | sort)
+          fi
+
+          echo "Found ${#DATA_FILES[@]} data.json file(s)"
+          if [ "${#DATA_FILES[@]}" -eq 0 ]; then
+            echo "::error::No data.json found in artifacts."
+            exit 1
+          fi
+
+          for data_file in "${DATA_FILES[@]}"; do
+            src_dir="$(dirname "$data_file")"
+            slug="$(basename "$src_dir")"
+            dest="econoplus/public/canadiantire/$slug"
+            echo "Copy $src_dir -> $dest"
+            mkdir -p "$dest"
+            if command -v rsync >/dev/null 2>&1; then
+              rsync -a "$src_dir"/ "$dest"/
+            else
+              cp -R "$src_dir"/. "$dest"/
+            fi
+          done
+
+          echo "ECONOPLUS public/canadiantire sample:"
+          (find econoplus/public/canadiantire -maxdepth 3 -print | head -n 100) || true
+
+      - name: Debug ECONOPLUS git status
+        working-directory: econoplus
+        run: |
+          echo "git status --porcelain"
+          git status --porcelain
+
+      - name: Commit & push
+        working-directory: econoplus
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add public/canadiantire
+          if [ -n "$(git status --porcelain)" ]; then
+            git commit -m "Update Canadian Tire stores (group ${{ inputs.group }}) [skip ci]"
+            git push origin HEAD:main
+          else
+            echo "No changes to commit."
+          fi
