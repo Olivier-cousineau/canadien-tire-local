@@ -115,8 +115,13 @@ jobs:
 
       - name: Debug artifact folders
         run: |
-          echo "Liste des dossiers sous artifacts/**/public/canadiantire :"
-          find artifacts -type d -path "*/public/canadiantire/*" -print || true
+          set -euo pipefail
+          echo "Listing artifacts tree (maxdepth 6):"
+          find artifacts -maxdepth 6 -print
+          if [ -z "$(find artifacts -mindepth 1 -maxdepth 6 -print -quit)" ]; then
+            echo "::error::Artifacts folder is empty."
+            exit 1
+          fi
 
       - name: Sync scraper outputs into econoplus repo
         shell: bash
@@ -124,7 +129,7 @@ jobs:
           set -euo pipefail
           mkdir -p econoplus/public/canadiantire
 
-          mapfile -t STORE_DIRS < <(find artifacts -mindepth 4 -maxdepth 4 -type d -path "*/public/canadiantire/*" -print | sort)
+          mapfile -t STORE_DIRS < <(find artifacts -type d -path "*/public/canadiantire/*" -print | sort)
 
           echo "Found ${#STORE_DIRS[@]} store folder(s)"
           if [ "${#STORE_DIRS[@]}" -eq 0 ]; then
