@@ -167,30 +167,39 @@ jobs:
       - name: Sync scraper outputs into ECONOPLUS repo
         run: |
           set -euo pipefail
+          shopt -s nullglob
           mkdir -p econoplus/public/canadiantire
 
           # Expected layout:
           # artifacts/canadiantire-shard-*/<storeSlug>/{data.json,data.csv}
-          mapfile -t store_dirs < <(find artifacts -mindepth 2 -maxdepth 2 -type d -path "artifacts/canadiantire-shard-*/*")
-
-          echo "Found ${#store_dirs[@]} store directories"
-          if [ "${#store_dirs[@]}" -eq 0 ]; then
-            echo "No store directories found under artifacts/canadiantire-shard-*/<storeSlug>."
-            exit 1
-          fi
-
+          store_dir_count=0
           if command -v rsync >/dev/null 2>&1; then
-            for d in "${store_dirs[@]}"; do
-              store_slug="$(basename "$d")"
-              mkdir -p "econoplus/public/canadiantire/${store_slug}"
-              rsync -a "${d}/" "econoplus/public/canadiantire/${store_slug}/"
+            for shard in artifacts/canadiantire-shard-*; do
+              [ -d "$shard" ] || continue
+              for store_dir in "$shard"/*; do
+                [ -d "$store_dir" ] || continue
+                store_dir_count=$((store_dir_count + 1))
+                store_slug="$(basename "$store_dir")"
+                mkdir -p "econoplus/public/canadiantire/${store_slug}"
+                rsync -a "${store_dir}/" "econoplus/public/canadiantire/${store_slug}/"
+              done
             done
           else
-            for d in "${store_dirs[@]}"; do
-              store_slug="$(basename "$d")"
-              mkdir -p "econoplus/public/canadiantire/${store_slug}"
-              cp -R "${d}/." "econoplus/public/canadiantire/${store_slug}/"
+            for shard in artifacts/canadiantire-shard-*; do
+              [ -d "$shard" ] || continue
+              for store_dir in "$shard"/*; do
+                [ -d "$store_dir" ] || continue
+                store_dir_count=$((store_dir_count + 1))
+                store_slug="$(basename "$store_dir")"
+                mkdir -p "econoplus/public/canadiantire/${store_slug}"
+                cp -R "${store_dir}/." "econoplus/public/canadiantire/${store_slug}/"
+              done
             done
+          fi
+          echo "Found ${store_dir_count} store directories"
+          if [ "${store_dir_count}" -eq 0 ]; then
+            echo "No store directories found under artifacts/canadiantire-shard-*/<storeSlug>."
+            exit 1
           fi
 
           echo "Copied files:"
