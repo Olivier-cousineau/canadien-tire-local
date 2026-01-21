@@ -179,7 +179,7 @@ jobs:
           echo "Listing artifacts (maxdepth 3):"
           find artifacts -maxdepth 3 -print || true
 
-          # store dirs are: artifacts/canadiantire-shard-*/<storeSlug>
+          # Expected: artifacts/canadiantire-shard-*/<storeSlug>
           mapfile -t store_dirs < <(find artifacts -mindepth 2 -maxdepth 2 -type d -path "artifacts/canadiantire-shard-*/*")
 
           echo "Found ${#store_dirs[@]} store directories"
