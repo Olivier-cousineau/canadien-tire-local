@@ -305,7 +305,7 @@ async function dismissMedalliaPopup(page) {
   }
 }
 
-async function waitProductsStable(page, timeout = 15000) {
+async function waitProductsStable(page, timeout = 45000) {
   try {
     // On attend que les produits soient présents dans le DOM (moins strict que "visible")
     await page.waitForSelector('li[data-testid="product-grids"]', {
@@ -443,11 +443,11 @@ async function extractFromCard(card) {
 async function scrapeListing(page, { skipGuards = false } = {}) {
   if (!skipGuards) {
     await page.waitForSelector(SELECTORS.card, { timeout: 45000 });
-    await page.waitForSelector("span[data-testid='priceTotal'], .nl-price--total", { timeout: 20000 }).catch(() => {});
+    await page.waitForSelector("span[data-testid='priceTotal'], .nl-price--total", { timeout: 45000 }).catch(() => {});
   } else {
     const hasCards = await page.locator(SELECTORS.card).count();
     if (!hasCards) {
-      await page.waitForSelector(SELECTORS.card, { timeout: 20000 });
+      await page.waitForSelector(SELECTORS.card, { timeout: 45000 });
     }
   }
 
@@ -563,7 +563,7 @@ async function scrapeListing(page, { skipGuards = false } = {}) {
   } catch (e) {
     console.warn("scrapeListing evaluateAll error:", e?.message || e);
     if (!skipGuards) {
-      await page.waitForSelector(SELECTORS.card, { timeout: 20000 }).catch(() => {});
+      await page.waitForSelector(SELECTORS.card, { timeout: 45000 }).catch(() => {});
     }
     const cards = page.locator(SELECTORS.card);
     const n = await cards.count();
@@ -918,7 +918,7 @@ async function lazyWarmup(page) {
   await Promise.race([
     page.waitForSelector(
       "[data-testid='sale-price'], [data-testid='regular-price'], span[data-testid='priceTotal'], .nl-price--total, .price, .price__value",
-      { timeout: 4500 }
+      { timeout: 45000 }
     ),
     page.waitForTimeout(650),
   ]).catch(()=>{});
@@ -1185,7 +1185,7 @@ async function selectStore(page, { storeId, storeName, debugDir } = {}) {
     if (attempt <= maxRetries) {
       console.warn(`Validation failed → retry ${attempt}/${maxRetries} ...`);
       await closeStoreSelector(page);
-      await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+      await page.waitForLoadState("domcontentloaded", { timeout: 60000 }).catch(() => {});
     }
   }
 
@@ -1377,6 +1377,7 @@ async function scrapeStore(store) {
   const city = normalizedStore.storeName || null;
   const cliStoreName = args.storeName ? String(args.storeName) : "";
   const storeName = cliStoreName || normalizedStore.storeName || "";
+  const STORE_TIMEOUT_MS = 25 * 60 * 1000;
   if (hasReachedTimeLimit()) {
     console.log(
       `[SCRAPER] Limite atteinte avant le magasin ${storeId ?? "?"}. Arrêt du lancement de ce magasin.`
@@ -1396,208 +1397,229 @@ async function scrapeStore(store) {
   console.log(`💾  JSON → ${OUT_JSON}`);
   console.log(`📄  CSV  → ${OUT_CSV}`);
 
-  const browser = await chromium.launch({ headless: HEADLESS, args: ["--disable-dev-shm-usage"] });
-  const context = await browser.newContext({ locale: "fr-CA" });
-  context.setDefaultTimeout(0);
-  const page = await context.newPage();
-  page.setDefaultNavigationTimeout(0);
+  let browser;
+  let context;
+  let page;
+  let storeTimeoutId;
 
   const storeContext = { storeId, city: storeName || city || null };
 
   try {
+    browser = await chromium.launch({ headless: HEADLESS, args: ["--disable-dev-shm-usage"] });
+    context = await browser.newContext({ locale: "fr-CA" });
+    context.setDefaultTimeout(0);
+    page = await context.newPage();
+    page.setDefaultNavigationTimeout(0);
+
     await page.route("**/*medallia*", (route) => route.abort());
     await page.route("**/resources.digital-cloud.medallia.ca/**", (route) => route.abort());
     await fsExtra.ensureDir(OUT_BASE);
 
-    const categoryUrls = await getCategoryUrls();
-    const urlsToProcess = categoryUrls.length ? categoryUrls : [DEFAULT_BASE];
-    console.log(
-      `[SCRAPER] ${urlsToProcess.length} catégorie(s) à parcourir pour le magasin ${storeId ?? "?"}.`
-    );
-    console.log(`⚙️  Options → liquidation_price=${INCLUDE_LIQUIDATION_PRICE ? "on":"off"}, regular_price=${INCLUDE_REGULAR_PRICE ? "on":"off"}`);
+    const timeoutPromise = new Promise((_, reject) => {
+      storeTimeoutId = setTimeout(() => {
+        reject(new Error(`Timeout magasin ${storeId ?? "?"} après ${STORE_TIMEOUT_MS / 60000} min.`));
+      }, STORE_TIMEOUT_MS);
+    });
 
-    const allDeals = [];
-    const dedupeKeys = new Set();
+    const scrapePromise = (async () => {
+      const categoryUrls = await getCategoryUrls();
+      const urlsToProcess = categoryUrls.length ? categoryUrls : [DEFAULT_BASE];
+      console.log(
+        `[SCRAPER] ${urlsToProcess.length} catégorie(s) à parcourir pour le magasin ${storeId ?? "?"}.`
+      );
+      console.log(`⚙️  Options → liquidation_price=${INCLUDE_LIQUIDATION_PRICE ? "on":"off"}, regular_price=${INCLUDE_REGULAR_PRICE ? "on":"off"}`);
 
-    const registerRecord = (record) => {
-      const key = buildStableDedupKey(record);
-      if (key && dedupeKeys.has(key)) return false;
-      if (key) dedupeKeys.add(key);
-      allDeals.push(record);
-      return true;
-    };
+      const allDeals = [];
+      const dedupeKeys = new Set();
 
-    const extractProductsOnPage = async (skipGuards) => {
-      const cards = await scrapeListing(page, { skipGuards });
-      const pageIsClearance = /\/liquidation\.html/i.test(await page.url());
-      const productKeysSet = new Set();
-      const records = [];
-
-      for (const card of cards) {
-        const availabilityKeys = buildCtKeysFromAvailability(card.availability);
-        const productNumberRaw =
-          card.product_number_raw ??
-          extractCtProductNumberRaw(card.link, card.name, card.title) ??
-          availabilityKeys.productNumberRaw ??
-          null;
-        const normalizedProductNumber =
-          normalizeCtProductNumber(productNumberRaw) ??
-          availabilityKeys.productNumber ??
-          normalizeCtProductNumber(card.product_number ?? card.productNumber ?? null);
-        const productKey =
-          card.product_key ||
-          card.productKey ||
-          makeCtProductKey(productNumberRaw ?? availabilityKeys.productNumberRaw ?? null) ||
-          availabilityKeys.productKey;
-
-        if (productNumberRaw) card.product_number_raw = productNumberRaw;
-        if (normalizedProductNumber) card.product_number = normalizedProductNumber;
-        if (productKey) card.product_key = productKey;
-
-        buildProductIdentifiers(card).forEach((key) => productKeysSet.add(key));
-
-        const regularPriceForCheck = extractPrice(
-          card.price_original_raw ??
-          card.price_original ??
-          card.regular_price ??
-          null
-        );
-        const salePriceForCheck = extractPrice(
-          card.price_sale_raw ??
-          card.price_sale ??
-          card.sale_price ??
-          null
-        );
-
-        const discountPercent = computeDiscountPercent(
-          regularPriceForCheck,
-          salePriceForCheck
-        );
-
-        if (
-          discountPercent == null ||
-          discountPercent < 50
-        ) {
-          continue;
-        }
-        const record = createRecordFromCard(
-          { ...card, discount_percent: discountPercent },
-          pageIsClearance,
-          storeContext
-        );
-        if (!record) continue;
-        if (record.title || record.price != null || record.image) {
-          records.push(record);
-        }
-      }
-
-      return { records, totalProducts: cards.length, productKeys: productKeysSet, accepted: records.length };
-    };
-
-    for (const categoryUrl of urlsToProcess) {
-      if (hasReachedTimeLimit()) {
-        console.log(
-          `[SCRAPER] Limite atteinte avant le chargement de la catégorie ${categoryUrl} pour ${storeId ?? "?"}.`
-        );
-        break;
-      }
-
-      const storeCategoryUrl = buildCategoryUrlForStore(categoryUrl, storeId);
-      const autoScrollConfig = {
-        productSelector: SELECTORS.card,
-        maxRounds: Number(args.autoScrollMaxRounds) || AUTO_SCROLL_DEFAULTS.maxRounds,
-        stableRoundsToStop: Number(args.autoScrollStableRounds) || AUTO_SCROLL_DEFAULTS.stableRoundsToStop,
-        perRoundWaitMs: Number(args.autoScrollWaitMs) || AUTO_SCROLL_DEFAULTS.perRoundWaitMs,
-        maxTotalMs: Number(args.autoScrollMaxTotalMs) || AUTO_SCROLL_DEFAULTS.maxTotalMs,
+      const registerRecord = (record) => {
+        const key = buildStableDedupKey(record);
+        if (key && dedupeKeys.has(key)) return false;
+        if (key) dedupeKeys.add(key);
+        allDeals.push(record);
+        return true;
       };
 
-      const itemsAllPages = await scrapeCategoryAllPages(page, storeCategoryUrl, storeId, {
-        extractPage: () => extractProductsOnPage(true),
-        autoScrollConfig,
-        storeName: storeName || city || "",
-        debugDir,
-      });
+      const extractProductsOnPage = async (skipGuards) => {
+        const cards = await scrapeListing(page, { skipGuards });
+        const pageIsClearance = /\/liquidation\.html/i.test(await page.url());
+        const productKeysSet = new Set();
+        const records = [];
 
-      let deals = itemsAllPages.filter((x) => (x.discount_percent ?? 0) >= 50);
-      deals = dedupeDeals(deals);
+        for (const card of cards) {
+          const availabilityKeys = buildCtKeysFromAvailability(card.availability);
+          const productNumberRaw =
+            card.product_number_raw ??
+            extractCtProductNumberRaw(card.link, card.name, card.title) ??
+            availabilityKeys.productNumberRaw ??
+            null;
+          const normalizedProductNumber =
+            normalizeCtProductNumber(productNumberRaw) ??
+            availabilityKeys.productNumber ??
+            normalizeCtProductNumber(card.product_number ?? card.productNumber ?? null);
+          const productKey =
+            card.product_key ||
+            card.productKey ||
+            makeCtProductKey(productNumberRaw ?? availabilityKeys.productNumberRaw ?? null) ||
+            availabilityKeys.productKey;
 
-      let accepted = 0;
-      for (const deal of deals) {
-        if (registerRecord(deal)) accepted += 1;
+          if (productNumberRaw) card.product_number_raw = productNumberRaw;
+          if (normalizedProductNumber) card.product_number = normalizedProductNumber;
+          if (productKey) card.product_key = productKey;
+
+          buildProductIdentifiers(card).forEach((key) => productKeysSet.add(key));
+
+          const regularPriceForCheck = extractPrice(
+            card.price_original_raw ??
+            card.price_original ??
+            card.regular_price ??
+            null
+          );
+          const salePriceForCheck = extractPrice(
+            card.price_sale_raw ??
+            card.price_sale ??
+            card.sale_price ??
+            null
+          );
+
+          const discountPercent = computeDiscountPercent(
+            regularPriceForCheck,
+            salePriceForCheck
+          );
+
+          if (
+            discountPercent == null ||
+            discountPercent < 50
+          ) {
+            continue;
+          }
+          const record = createRecordFromCard(
+            { ...card, discount_percent: discountPercent },
+            pageIsClearance,
+            storeContext
+          );
+          if (!record) continue;
+          if (record.title || record.price != null || record.image) {
+            records.push(record);
+          }
+        }
+
+        return { records, totalProducts: cards.length, productKeys: productKeysSet, accepted: records.length };
+      };
+
+      for (const categoryUrl of urlsToProcess) {
+        if (hasReachedTimeLimit()) {
+          console.log(
+            `[SCRAPER] Limite atteinte avant le chargement de la catégorie ${categoryUrl} pour ${storeId ?? "?"}.`
+          );
+          break;
+        }
+
+        const storeCategoryUrl = buildCategoryUrlForStore(categoryUrl, storeId);
+        const autoScrollConfig = {
+          productSelector: SELECTORS.card,
+          maxRounds: Number(args.autoScrollMaxRounds) || AUTO_SCROLL_DEFAULTS.maxRounds,
+          stableRoundsToStop: Number(args.autoScrollStableRounds) || AUTO_SCROLL_DEFAULTS.stableRoundsToStop,
+          perRoundWaitMs: Number(args.autoScrollWaitMs) || AUTO_SCROLL_DEFAULTS.perRoundWaitMs,
+          maxTotalMs: Number(args.autoScrollMaxTotalMs) || AUTO_SCROLL_DEFAULTS.maxTotalMs,
+        };
+
+        const itemsAllPages = await scrapeCategoryAllPages(page, storeCategoryUrl, storeId, {
+          extractPage: () => extractProductsOnPage(true),
+          autoScrollConfig,
+          storeName: storeName || city || "",
+          debugDir,
+        });
+
+        let deals = itemsAllPages.filter((x) => (x.discount_percent ?? 0) >= 50);
+        deals = dedupeDeals(deals);
+
+        let accepted = 0;
+        for (const deal of deals) {
+          if (registerRecord(deal)) accepted += 1;
+        }
+
+        console.log(
+          `✅ ${accepted} deal(s) >= 50% agrégés sur ${itemsAllPages.length} item(s) pour ${storeCategoryUrl}`
+        );
+        if (accepted === 0) {
+          console.log("ℹ️  Aucun deal >= 50% trouvé sur l'ensemble des pages de cette catégorie.");
+        }
       }
 
       console.log(
-        `✅ ${accepted} deal(s) >= 50% agrégés sur ${itemsAllPages.length} item(s) pour ${storeCategoryUrl}`
+        `[SCRAPER] Fin du scraping pour le magasin ${storeId ?? "?"} – ${allDeals.length} deal(s) total.`
       );
-      if (accepted === 0) {
-        console.log("ℹ️  Aucun deal >= 50% trouvé sur l'ensemble des pages de cette catégorie.");
-      }
-    }
 
-    console.log(
-      `[SCRAPER] Fin du scraping pour le magasin ${storeId ?? "?"} – ${allDeals.length} deal(s) total.`
-    );
+      const results = allDeals.map((out) => ({ ...out, image_url: out.image_url ?? out.image ?? null }));
 
-    const results = allDeals.map((out) => ({ ...out, image_url: out.image_url ?? out.image ?? null }));
+      await fsExtra.remove(OUT_JSON);
+      await fsExtra.remove(OUT_CSV);
+      const publicStoreDir = path.join(process.cwd(), "public", "canadiantire", storeSlug);
+      const publicJsonPath = path.join(publicStoreDir, "data.json");
+      const publicCsvPath = path.join(publicStoreDir, "data.csv");
+      await fsExtra.remove(publicJsonPath);
+      await fsExtra.remove(publicCsvPath);
 
-    await fsExtra.remove(OUT_JSON);
-    await fsExtra.remove(OUT_CSV);
-    const publicStoreDir = path.join(process.cwd(), "public", "canadiantire", storeSlug);
-    const publicJsonPath = path.join(publicStoreDir, "data.json");
-    const publicCsvPath = path.join(publicStoreDir, "data.csv");
-    await fsExtra.remove(publicJsonPath);
-    await fsExtra.remove(publicCsvPath);
+      fs.writeFileSync(OUT_JSON, JSON.stringify(results, null, 2));
+      console.log(`💾  JSON → ${OUT_JSON}`);
 
-    fs.writeFileSync(OUT_JSON, JSON.stringify(results, null, 2));
-    console.log(`💾  JSON → ${OUT_JSON}`);
+      const csv = createObjectCsvWriter({
+        path: OUT_CSV,
+        header: [
+          { id: "store_id", title: "store_id" },
+          { id: "city", title: "city" },
+          { id: "name", title: "name" },
+          { id: "title", title: "title" },
+          { id: "price", title: "price" },
+          { id: "price_raw", title: "price_raw" },
+          ...(INCLUDE_REGULAR_PRICE ? [
+            { id: "regular_price", title: "regular_price" },
+            { id: "regular_price_raw", title: "regular_price_raw" },
+          ] : []),
+          ...(INCLUDE_LIQUIDATION_PRICE ? [
+            { id: "liquidation_price", title: "liquidation_price" },
+            { id: "liquidation_price_raw", title: "liquidation_price_raw" },
+            { id: "sale_price", title: "sale_price" },
+            { id: "sale_price_raw", title: "sale_price_raw" },
+          ] : []),
+          { id: "liquidation", title: "liquidation" },
+          { id: "url", title: "url" },
+          { id: "link", title: "link" },
+          { id: "image", title: "image" },
+          { id: "image_url", title: "image_url" },
+          { id: "product_id", title: "product_id" },
+          { id: "product_number_raw", title: "product_number_raw" },
+          { id: "product_number", title: "product_number" },
+          { id: "product_key", title: "product_key" },
+          { id: "sku", title: "sku" },
+          { id: "sku_formatted", title: "sku_formatted" },
+          { id: "availability", title: "availability" },
+          { id: "availability_text", title: "availability_text" },
+          { id: "stockQty", title: "stockQty" },
+          { id: "badges", title: "badges" },
+          { id: "discount_percent", title: "discount_percent" },
+          { id: "price_sale_clean", title: "price_sale_clean" },
+          { id: "price_original_clean", title: "price_original_clean" },
+        ],
+      });
+      await csv.writeRecords(results);
+      console.log(`📄  CSV  → ${OUT_CSV}`);
 
-    const csv = createObjectCsvWriter({
-      path: OUT_CSV,
-      header: [
-        { id: "store_id", title: "store_id" },
-        { id: "city", title: "city" },
-        { id: "name", title: "name" },
-        { id: "title", title: "title" },
-        { id: "price", title: "price" },
-        { id: "price_raw", title: "price_raw" },
-        ...(INCLUDE_REGULAR_PRICE ? [
-          { id: "regular_price", title: "regular_price" },
-          { id: "regular_price_raw", title: "regular_price_raw" },
-        ] : []),
-        ...(INCLUDE_LIQUIDATION_PRICE ? [
-          { id: "liquidation_price", title: "liquidation_price" },
-          { id: "liquidation_price_raw", title: "liquidation_price_raw" },
-          { id: "sale_price", title: "sale_price" },
-          { id: "sale_price_raw", title: "sale_price_raw" },
-        ] : []),
-        { id: "liquidation", title: "liquidation" },
-        { id: "url", title: "url" },
-        { id: "link", title: "link" },
-        { id: "image", title: "image" },
-        { id: "image_url", title: "image_url" },
-        { id: "product_id", title: "product_id" },
-        { id: "product_number_raw", title: "product_number_raw" },
-        { id: "product_number", title: "product_number" },
-        { id: "product_key", title: "product_key" },
-        { id: "sku", title: "sku" },
-        { id: "sku_formatted", title: "sku_formatted" },
-        { id: "availability", title: "availability" },
-        { id: "availability_text", title: "availability_text" },
-        { id: "stockQty", title: "stockQty" },
-        { id: "badges", title: "badges" },
-        { id: "discount_percent", title: "discount_percent" },
-        { id: "price_sale_clean", title: "price_sale_clean" },
-        { id: "price_original_clean", title: "price_original_clean" },
-      ],
-    });
-    await csv.writeRecords(results);
-    console.log(`📄  CSV  → ${OUT_CSV}`);
+      console.log(`[SCRAPER] Magasin ${storeId ?? "?"} – terminé`);
+    })();
 
-    console.log(`[SCRAPER] Magasin ${storeId ?? "?"} – terminé`);
+    await Promise.race([scrapePromise, timeoutPromise]);
   } catch (error) {
     console.error(`[SCRAPER] ERREUR magasin ${storeId ?? "?"} –`, error);
   } finally {
-    await browser.close();
+    if (storeTimeoutId) clearTimeout(storeTimeoutId);
+    if (context) {
+      await context.close().catch(() => {});
+    }
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
   }
 }
 
