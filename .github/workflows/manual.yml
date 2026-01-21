@@ -174,28 +174,33 @@ jobs:
       - name: Sync scraper outputs into ECONOPLUS repo
         run: |
           mkdir -p econoplus/public/canadiantire
+
           echo "List artifacts contents:"
-          find artifacts -maxdepth 4 -print || true
-          mapfile -t source_dirs < <(find artifacts -type d -path "*/outputs/canadiantire/*")
-          if [ "${#source_dirs[@]}" -eq 0 ]; then
-            echo "No outputs/canadiantire/<storeSlug> directories found under artifacts."
+          find artifacts -maxdepth 3 -type d -print || true
+
+          mapfile -t store_dirs < <(find artifacts -mindepth 2 -maxdepth 2 -type d -path "artifacts/canadiantire-shard-*/*")
+
+          if [ "${#store_dirs[@]}" -eq 0 ]; then
+            echo "No store directories found under artifacts/canadiantire-shard-*/<storeSlug>."
             exit 1
           fi
+
           if command -v rsync >/dev/null 2>&1; then
-            for source_dir in "${source_dirs[@]}"; do
-              store_slug="$(basename "${source_dir}")"
+            for d in "${store_dirs[@]}"; do
+              store_slug="$(basename "$d")"
               mkdir -p "econoplus/public/canadiantire/${store_slug}"
-              rsync -a "${source_dir}/" "econoplus/public/canadiantire/${store_slug}/"
+              rsync -a "${d}/" "econoplus/public/canadiantire/${store_slug}/"
             done
           else
-            for source_dir in "${source_dirs[@]}"; do
-              store_slug="$(basename "${source_dir}")"
+            for d in "${store_dirs[@]}"; do
+              store_slug="$(basename "$d")"
               mkdir -p "econoplus/public/canadiantire/${store_slug}"
-              cp -R "${source_dir}/." "econoplus/public/canadiantire/${store_slug}/"
+              cp -R "${d}/." "econoplus/public/canadiantire/${store_slug}/"
             done
           fi
+
           echo "Files copied into econoplus/public/canadiantire:"
-          find econoplus/public/canadiantire -type f -print || true
+          find econoplus/public/canadiantire -maxdepth 2 -type f -print || true
 
       - name: Debug ECONOPLUS git status
         working-directory: econoplus
