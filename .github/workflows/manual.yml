@@ -170,18 +170,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p econoplus/public/canadiantire
           output_dir="econoplus/public/canadiantire"
-          copied_files=0
-          found_store_dirs=0
+          mkdir -p "$output_dir"
 
           if [ ! -d artifacts ]; then
             echo "Warning: artifacts directory is missing."
             exit 0
           fi
 
-          while IFS= read -r -d '' store_dir; do
-            found_store_dirs=1
+          mapfile -d '' store_dirs < <(find artifacts -mindepth 2 -maxdepth 2 -type d -path "artifacts/canadiantire-shard-*/*" -print0)
+
+          if [ "${#store_dirs[@]}" -eq 0 ]; then
+            echo "Warning: No store directories found under artifacts/canadiantire-shard-*."
+            echo "Artifacts contents (max depth 4):"
+            find artifacts -maxdepth 4 -print || true
+            exit 0
+          fi
+
+          copied_files=0
+          for store_dir in "${store_dirs[@]}"; do
             store_slug="$(basename "$store_dir")"
             json_path="${store_dir}/data.json"
             csv_path="${store_dir}/data.csv"
@@ -199,11 +206,7 @@ jobs:
             else
               echo "Warning: Missing data.csv for ${store_slug} (${store_dir})."
             fi
-          done < <(find artifacts -mindepth 2 -maxdepth 2 -type d -path "artifacts/canadiantire-shard-*/*" -print0)
-
-          if [ "$found_store_dirs" -eq 0 ]; then
-            echo "Warning: No store directories found under artifacts/canadiantire-shard-*."
-          fi
+          done
 
           if [ "$copied_files" -eq 0 ]; then
             echo "Warning: No data.json or data.csv files were copied."
