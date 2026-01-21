@@ -149,6 +149,8 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: canadiantire-shard-*
+          merge-multiple: true
 
       - name: Publish Canadian Tire data
         run: echo "Publish Canadian Tire data"
@@ -164,46 +166,35 @@ jobs:
           echo "Find econoplus public/canadiantire:"
           find econoplus/public/canadiantire -print || true
 
-      - name: Sync scraper outputs into ECONOPLUS repo
+      - name: Sync scraper outputs into econoplus repo
+        shell: bash
         run: |
           set -euo pipefail
-          shopt -s nullglob
           mkdir -p econoplus/public/canadiantire
 
-          # Expected layout:
-          # artifacts/canadiantire-shard-*/<storeSlug>/{data.json,data.csv}
-          store_dir_count=0
-          if command -v rsync >/dev/null 2>&1; then
-            for shard in artifacts/canadiantire-shard-*; do
-              [ -d "$shard" ] || continue
-              for store_dir in "$shard"/*; do
-                [ -d "$store_dir" ] || continue
-                store_dir_count=$((store_dir_count + 1))
-                store_slug="$(basename "$store_dir")"
-                mkdir -p "econoplus/public/canadiantire/${store_slug}"
-                rsync -a "${store_dir}/" "econoplus/public/canadiantire/${store_slug}/"
-              done
-            done
-          else
-            for shard in artifacts/canadiantire-shard-*; do
-              [ -d "$shard" ] || continue
-              for store_dir in "$shard"/*; do
-                [ -d "$store_dir" ] || continue
-                store_dir_count=$((store_dir_count + 1))
-                store_slug="$(basename "$store_dir")"
-                mkdir -p "econoplus/public/canadiantire/${store_slug}"
-                cp -R "${store_dir}/." "econoplus/public/canadiantire/${store_slug}/"
-              done
-            done
-          fi
-          echo "Found ${store_dir_count} store directories"
-          if [ "${store_dir_count}" -eq 0 ]; then
-            echo "No store directories found under artifacts/canadiantire-shard-*/<storeSlug>."
+          echo "Scanning artifacts for store outputs (data.json)..."
+          mapfile -t json_files < <(find artifacts -type f -name "data.json" | sort)
+
+          echo "Found ${#json_files[@]} data.json files"
+          if [ "${#json_files[@]}" -eq 0 ]; then
+            echo "No data.json found under artifacts. Nothing to publish."
             exit 1
           fi
 
-          echo "Copied files:"
-          find econoplus/public/canadiantire -maxdepth 2 -type f -print || true
+          for json in "${json_files[@]}"; do
+            store_dir="$(dirname "$json")"
+            store_slug="$(basename "$store_dir")"
+
+            mkdir -p "econoplus/public/canadiantire/${store_slug}"
+            if command -v rsync >/dev/null 2>&1; then
+              rsync -a "${store_dir}/" "econoplus/public/canadiantire/${store_slug}/"
+            else
+              cp -R "${store_dir}/." "econoplus/public/canadiantire/${store_slug}/"
+            fi
+          done
+
+          echo "Copied files (sample):"
+          find econoplus/public/canadiantire -maxdepth 2 -type f | head -n 50 || true
 
       - name: Debug ECONOPLUS git status
         working-directory: econoplus
