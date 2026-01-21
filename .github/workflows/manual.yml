@@ -171,8 +171,16 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p econoplus/public/canadiantire
+          mapfile -d '' data_files < <(find artifacts -type f -name "data.json" -print0)
 
-          find artifacts -type f -name "data.json" | while read -r json; do
+          if [ "${#data_files[@]}" -eq 0 ]; then
+            echo "No outputs/canadiantire/<storeSlug> directories found under artifacts."
+            echo "Artifacts contents (max depth 4):"
+            find artifacts -maxdepth 4 -print || true
+            exit 1
+          fi
+
+          for json in "${data_files[@]}"; do
             store_dir="$(dirname "$json")"
             store_slug="$(basename "$store_dir")"
             mkdir -p "econoplus/public/canadiantire/${store_slug}"
