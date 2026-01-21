@@ -173,12 +173,20 @@ jobs:
 
       - name: Sync scraper outputs into ECONOPLUS repo
         run: |
+          set -euo pipefail
           mkdir -p econoplus/public/canadiantire
 
-          echo "List artifacts contents:"
-          find artifacts -maxdepth 3 -type d -print || true
+          echo "Listing artifacts (maxdepth 3):"
+          find artifacts -maxdepth 3 -print || true
 
+          # store dirs are: artifacts/canadiantire-shard-*/<storeSlug>
           mapfile -t store_dirs < <(find artifacts -mindepth 2 -maxdepth 2 -type d -path "artifacts/canadiantire-shard-*/*")
+
+          echo "Found ${#store_dirs[@]} store directories"
+          if [ "${#store_dirs[@]}" -eq 0 ]; then
+            echo "No store directories found under artifacts/canadiantire-shard-*/<storeSlug>."
+            exit 1
+          fi
 
           if command -v rsync >/dev/null 2>&1; then
             for d in "${store_dirs[@]}"; do
@@ -194,7 +202,7 @@ jobs:
             done
           fi
 
-          echo "Files copied into econoplus/public/canadiantire:"
+          echo "Copied files:"
           find econoplus/public/canadiantire -maxdepth 2 -type f -print || true
 
       - name: Debug ECONOPLUS git status
