@@ -76,22 +76,23 @@ jobs:
       - name: Run scraper for store
         run: node scraper_ct.js --storeId "${{ matrix.storeId }}" --storeName "${{ matrix.storeName }}"
 
-      - name: Copy scraper outputs into public folder
+      - name: Publish outputs -> public
         run: |
           set -euo pipefail
-          dest="public/canadiantire/${{ matrix.storeSlug }}"
-          mkdir -p "$dest"
-          cp -R outputs/canadiantire/* "$dest/"
+          mkdir -p public/canadiantire
+          cp -R outputs/canadiantire/* public/canadiantire/
 
-      - name: Debug public folder before upload
-        run: find public -maxdepth 4
+      - name: Debug outputs & public before upload
+        run: |
+          find outputs -maxdepth 5
+          find public -maxdepth 5
 
       - name: Upload scraper outputs
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: canadiantire-${{ matrix.storeSlug }}
-          path: public/canadiantire/${{ matrix.storeSlug }}/**
+          path: public/canadiantire/**
           if-no-files-found: warn
 
   publish-to-econoplus:
