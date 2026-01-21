@@ -169,10 +169,8 @@ jobs:
           set -euo pipefail
           mkdir -p econoplus/public/canadiantire
 
-          echo "Listing artifacts (maxdepth 3):"
-          find artifacts -maxdepth 3 -print || true
-
-          # Expected: artifacts/canadiantire-shard-*/<storeSlug>
+          # Expected layout:
+          # artifacts/canadiantire-shard-*/<storeSlug>/{data.json,data.csv}
           mapfile -t store_dirs < <(find artifacts -mindepth 2 -maxdepth 2 -type d -path "artifacts/canadiantire-shard-*/*")
 
           echo "Found ${#store_dirs[@]} store directories"
