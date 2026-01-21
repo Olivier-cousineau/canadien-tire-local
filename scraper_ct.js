@@ -1558,6 +1558,7 @@ async function scrapeStore(store) {
       const publicStoreDir = path.join(process.cwd(), "public", "canadiantire", storeSlug);
       const publicJsonPath = path.join(publicStoreDir, "data.json");
       const publicCsvPath = path.join(publicStoreDir, "data.csv");
+      await fsExtra.ensureDir(publicStoreDir);
       await fsExtra.remove(publicJsonPath);
       await fsExtra.remove(publicCsvPath);
 
@@ -1605,6 +1606,17 @@ async function scrapeStore(store) {
       });
       await csv.writeRecords(results);
       console.log(`📄  CSV  → ${OUT_CSV}`);
+
+      await fsExtra.copy(OUT_BASE, publicStoreDir, {
+        overwrite: true,
+        filter: (src) => {
+          if (src === OUT_BASE) return true;
+          const rel = path.relative(OUT_BASE, src);
+          if (!rel) return true;
+          return !rel.startsWith(`debug${path.sep}`) && rel !== "debug";
+        },
+      });
+      console.log(`📁  Publish → ${publicStoreDir}`);
 
       console.log(`[SCRAPER] Magasin ${storeId ?? "?"} – terminé`);
     })();
