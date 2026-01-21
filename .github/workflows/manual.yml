@@ -67,6 +67,7 @@ jobs:
 
   scrape:
     runs-on: ubuntu-latest
+    timeout-minutes: 240
     needs: prepare
     strategy:
       fail-fast: false
@@ -116,8 +117,14 @@ jobs:
       - name: Run scraper for shard stores
         run: node scraper_ct.js --storesFile stores_for_shard.json
 
+      - name: Debug scraper outputs
+        run: |
+          echo "Listing outputs/canadiantire:"
+          find outputs/canadiantire -maxdepth 4 -print || true
+
       - name: Upload scraper outputs
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: canadiantire-shard-${{ matrix.shard }}
           path: outputs/canadiantire/
