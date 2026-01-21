@@ -129,25 +129,36 @@ jobs:
           set -euo pipefail
           mkdir -p econoplus/public/canadiantire
 
-          mapfile -t STORE_DIRS < <(find artifacts -type d -path "*/public/canadiantire/*" -print | sort)
+          echo "Artifacts tree (maxdepth 8):"
+          find artifacts -maxdepth 8 -print
 
-          echo "Found ${#STORE_DIRS[@]} store folder(s)"
-          if [ "${#STORE_DIRS[@]}" -eq 0 ]; then
-            echo "::error::No public/canadiantire store folders found in artifacts."
+          mapfile -t DATA_FILES < <(find artifacts -type f -path "*/public/canadiantire/*/data.json" -print | sort)
+          if [ "${#DATA_FILES[@]}" -eq 0 ]; then
+            echo "No public/canadiantire data.json found. Falling back to artifacts/**/data.json"
+            mapfile -t DATA_FILES < <(find artifacts -type f -name "data.json" -print | sort)
+          fi
+
+          echo "Found ${#DATA_FILES[@]} data.json file(s)"
+          if [ "${#DATA_FILES[@]}" -eq 0 ]; then
+            echo "::error::No data.json found in artifacts."
             exit 1
           fi
 
-          for src in "${STORE_DIRS[@]}"; do
-            slug="$(basename "$src")"
+          for data_file in "${DATA_FILES[@]}"; do
+            src_dir="$(dirname "$data_file")"
+            slug="$(basename "$src_dir")"
             dest="econoplus/public/canadiantire/$slug"
-            echo "Copy $src -> $dest"
+            echo "Copy $src_dir -> $dest"
             mkdir -p "$dest"
             if command -v rsync >/dev/null 2>&1; then
-              rsync -a "$src"/ "$dest"/
+              rsync -a "$src_dir"/ "$dest"/
             else
-              cp -R "$src"/. "$dest"/
+              cp -R "$src_dir"/. "$dest"/
             fi
           done
+
+          echo "ECONOPLUS public/canadiantire sample:"
+          find econoplus/public/canadiantire -maxdepth 3 -print | head -n 100
 
       - name: Debug ECONOPLUS git status
         working-directory: econoplus
