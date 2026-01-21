@@ -179,49 +179,29 @@ jobs:
         if: steps.econoplus-secret.outputs.available == 'true'
         run: |
           set -euo pipefail
-          output_dir="econoplus/public/canadiantire"
-          mkdir -p "$output_dir"
+          mkdir -p econoplus/public/canadiantire
 
-          if [ ! -d artifacts ]; then
-            echo "Warning: artifacts directory is missing."
-            exit 0
+          mapfile -t STORE_DIRS < <(find artifacts -type f -name "data.json" -print | xargs -r -n1 dirname | sort -u)
+
+          echo "Found ${#STORE_DIRS[@]} store folder(s)"
+          if [ "${#STORE_DIRS[@]}" -eq 0 ]; then
+            echo "::error::No store folders found (no data.json under artifacts)."
+            exit 1
           fi
 
-          mapfile -d '' store_dirs < <(find artifacts -mindepth 2 -maxdepth 2 -type d -path "artifacts/canadiantire-shard-*/*" -print0)
-
-          if [ "${#store_dirs[@]}" -eq 0 ]; then
-            echo "Warning: No store directories found under artifacts/canadiantire-shard-*."
-            echo "Artifacts contents (max depth 4):"
-            find artifacts -maxdepth 4 -print || true
-            exit 0
-          fi
-
-          copied_files=0
-          for store_dir in "${store_dirs[@]}"; do
-            store_slug="$(basename "$store_dir")"
-            json_path="${store_dir}/data.json"
-            csv_path="${store_dir}/data.csv"
-
-            if [ -f "$json_path" ]; then
-              cp "$json_path" "${output_dir}/${store_slug}.json"
-              copied_files=$((copied_files + 1))
+          for src in "${STORE_DIRS[@]}"; do
+            slug="$(basename "$src")"
+            dest="econoplus/public/canadiantire/$slug"
+            echo "Copy $src -> $dest"
+            mkdir -p "$dest"
+            if command -v rsync >/dev/null 2>&1; then
+              rsync -a "$src"/ "$dest"/
             else
-              echo "Warning: Missing data.json for ${store_slug} (${store_dir})."
-            fi
-
-            if [ -f "$csv_path" ]; then
-              cp "$csv_path" "${output_dir}/${store_slug}.csv"
-              copied_files=$((copied_files + 1))
-            else
-              echo "Warning: Missing data.csv for ${store_slug} (${store_dir})."
+              cp -R "$src"/. "$dest"/
             fi
           done
 
-          if [ "$copied_files" -eq 0 ]; then
-            echo "Warning: No data.json or data.csv files were copied."
-            echo "Artifacts contents (max depth 4):"
-            find artifacts -maxdepth 4 -print || true
-          fi
+          find econoplus/public/canadiantire -maxdepth 3 -type f -print | head -n 200
 
       - name: Debug ECONOPLUS git status
         working-directory: econoplus
