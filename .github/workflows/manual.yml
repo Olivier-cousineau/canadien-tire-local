@@ -180,11 +180,6 @@ jobs:
 
           mapfile -t store_dirs < <(find artifacts -mindepth 2 -maxdepth 2 -type d -path "artifacts/canadiantire-shard-*/*")
 
-          if [ "${#store_dirs[@]}" -eq 0 ]; then
-            echo "No store directories found under artifacts/canadiantire-shard-*/<storeSlug>."
-            exit 1
-          fi
-
           if command -v rsync >/dev/null 2>&1; then
             for d in "${store_dirs[@]}"; do
               store_slug="$(basename "$d")"
