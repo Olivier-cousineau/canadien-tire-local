@@ -2,6 +2,15 @@ name: Manual scraper run
 
 on:
   workflow_dispatch:
+    inputs:
+      shard:
+        description: Sélection du shard (A = première moitié, B = deuxième moitié)
+        required: true
+        default: A
+        type: choice
+        options:
+          - A
+          - B
 
 jobs:
   prepare:
@@ -14,6 +23,8 @@ jobs:
 
       - name: Build stores matrix
         id: build-matrix
+        env:
+          SCRAPE_SHARD: ${{ github.event.inputs.shard }}
         run: |
           node - <<'NODE'
           const fs = require("fs");
@@ -32,7 +43,13 @@ jobs:
               .replace(/-+/g, "-");
           };
 
-          const stores = raw.slice(0, 4).map((store) => {
+          const total = raw.length;
+          const splitIndex = Math.ceil(total / 2);
+          const shard = String(process.env.SCRAPE_SHARD || "A").toUpperCase();
+          const shardStores =
+            shard === "B" ? raw.slice(splitIndex) : raw.slice(0, splitIndex);
+
+          const stores = shardStores.map((store) => {
             const storeId = String(store.storeId ?? store.id ?? "");
             const storeName = String(store.storeName ?? store.city ?? store.name ?? "");
             const storeSlug = `${storeId}-${slugify(storeName)}`;
