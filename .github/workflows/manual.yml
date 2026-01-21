@@ -158,7 +158,7 @@ jobs:
           done
 
           echo "ECONOPLUS public/canadiantire sample:"
-          find econoplus/public/canadiantire -maxdepth 3 -print | head -n 100
+          (find econoplus/public/canadiantire -maxdepth 3 -print | head -n 100) || true
 
       - name: Debug ECONOPLUS git status
         working-directory: econoplus
