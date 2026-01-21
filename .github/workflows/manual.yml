@@ -176,7 +176,7 @@ jobs:
             if [ -f "${dir}/data.json" ]; then
               store_dirs+=("$dir")
             fi
-          done < <(find artifacts -mindepth 2 -maxdepth 2 -type d -print0)
+          done < <(find artifacts -mindepth 3 -maxdepth 3 -type d -print0)
 
           if [ "${#store_dirs[@]}" -eq 0 ]; then
             echo "No store directories with data.json found under artifacts."
