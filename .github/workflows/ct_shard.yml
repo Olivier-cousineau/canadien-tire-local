@@ -1,0 +1,134 @@
+name: Canadian Tire shard
+
+on:
+  workflow_dispatch:
+    inputs:
+      group:
+        description: Groupe à traiter (A ou B)
+        required: true
+        default: A
+        type: choice
+        options:
+          - A
+          - B
+      shard_index:
+        description: Index du shard (1..10)
+        required: true
+        default: "1"
+        type: choice
+        options:
+          - "1"
+          - "2"
+          - "3"
+          - "4"
+          - "5"
+          - "6"
+          - "7"
+          - "8"
+          - "9"
+          - "10"
+  workflow_call:
+    inputs:
+      group:
+        required: true
+        type: string
+      shard_index:
+        required: true
+        type: string
+
+concurrency:
+  group: canadiantire-${{ inputs.group }}-shards
+  cancel-in-progress: false
+
+jobs:
+  scrape-shard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install chromium
+
+      - name: Build shard task list
+        env:
+          SCRAPE_GROUP: ${{ inputs.group }}
+          SHARD_INDEX: ${{ inputs.shard_index }}
+        run: |
+          node - <<'NODE'
+          const fs = require("fs");
+
+          const raw = JSON.parse(
+            fs.readFileSync("data/canadian_tire_stores.json", "utf8")
+          );
+
+          const total = raw.length;
+          const half = Math.ceil(total / 2);
+          const group = String(process.env.SCRAPE_GROUP || "A").toUpperCase();
+          const shardIndex = Number(process.env.SHARD_INDEX || 1);
+          const shardCount = 10;
+
+          if (!Number.isInteger(shardIndex) || shardIndex < 1 || shardIndex > shardCount) {
+            throw new Error(`Invalid shard_index: ${process.env.SHARD_INDEX}`);
+          }
+
+          const groupStores = group === "B" ? raw.slice(half) : raw.slice(0, half);
+          const shardSize = Math.ceil(groupStores.length / shardCount);
+          const start = (shardIndex - 1) * shardSize;
+          const end = start + shardSize;
+          const shardStores = groupStores.slice(start, end);
+
+          if (!shardStores.length) {
+            throw new Error("Aucun magasin trouvé pour ce shard.");
+          }
+
+          const tasks = shardStores
+            .map((store) => {
+              const storeId = String(store.storeId ?? store.id ?? "");
+              const storeName = String(store.storeName ?? store.city ?? store.name ?? "");
+              return `${storeId}\t${storeName}`;
+            })
+            .filter((line) => !line.startsWith("\t"));
+
+          if (!tasks.length) {
+            throw new Error("Aucun magasin valide trouvé pour ce shard.");
+          }
+
+          fs.writeFileSync("tasks.txt", `${tasks.join("\n")}\n`, "utf8");
+
+          console.log(`Group ${group} total stores: ${groupStores.length}`);
+          console.log(`Shard ${shardIndex}/${shardCount} stores: ${tasks.length}`);
+          NODE
+
+      - name: Run scraper for shard stores
+        run: |
+          set -euo pipefail
+          if [ ! -s tasks.txt ]; then
+            echo "::error::tasks.txt is empty."
+            exit 1
+          fi
+          cat tasks.txt | xargs -P 4 -n 1 -d $'\n' bash -lc 'IFS=$'"'"'\t'"'"' read -r storeId storeName <<< "$1"; echo "Scraping $storeId - $storeName"; node scraper_ct.js --storeId "$storeId" --storeName "$storeName"' _
+
+      - name: Publish outputs -> public
+        run: |
+          set -euo pipefail
+          mkdir -p public/canadiantire
+          cp -R outputs/canadiantire/* public/canadiantire/
+
+      - name: Upload scraper outputs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: canadiantire-${{ inputs.group }}-${{ inputs.shard_index }}
+          path: public/canadiantire/**
+          if-no-files-found: warn
