@@ -29,8 +29,19 @@ jobs:
       - name: Build 80%+ deals index
         run: node scripts/build_deals_index_80.js
 
-      - name: Commit & push index
+      - name: Commit & push index to econoplus
+        env:
+          ECONOPLUS_TOKEN: ${{ secrets.ECONOPLUS }}
         run: |
+          if [ -z "$ECONOPLUS_TOKEN" ]; then
+            echo "Missing ECONOPLUS secret."
+            exit 1
+          fi
+          ECONOPLUS_REPO="${{ github.repository_owner }}/econoplus"
+          git clone "https://x-access-token:${ECONOPLUS_TOKEN}@github.com/${ECONOPLUS_REPO}.git" econoplus
+          mkdir -p econoplus/public/index
+          cp public/index/deals-80.json econoplus/public/index/deals-80.json
+          cd econoplus
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add public/index/deals-80.json
