@@ -77,7 +77,7 @@ function safeLoadStores() {
 const args = minimist(process.argv.slice(2), {
   string: ["storeId", "storeName", "outBase", "maxPages", "concurrency", "storesFile"],
   boolean: ["debug", "headful", "downloadImages"],
-  default: { maxPages: "120", concurrency: "4" },
+  default: { maxPages: "120", concurrency: "15" },
 });
 
 const storeIdCLI = args.storeId != null ? String(args.storeId) : "";
@@ -184,7 +184,7 @@ if (!storesFileCLI) {
 const parsedConcurrency = Number.parseInt(String(args.concurrency), 10);
 const CONCURRENCY = Number.isFinite(parsedConcurrency) && parsedConcurrency > 0
   ? parsedConcurrency
-  : 4;
+  : 15;
 
 const storeFilter = !storesFileCLI ? (args.store || args.storeId || null) : null;
 if (storeFilter) {

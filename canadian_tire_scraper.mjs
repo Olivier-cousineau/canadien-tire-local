@@ -17,7 +17,7 @@ const HEADLESS = args.headless !== false;
 const MAX_PAGES = args.pages ? Number(args.pages) : null;
 const CONCURRENCY = Number.isFinite(Number(args.concurrency))
   ? Math.max(1, Number(args.concurrency))
-  : 4;
+  : 15;
 
 const DISCOUNT_FILTER = ["50-59", "60-69", "70-79", "80-89", "90-100"];
 const BASE_URL = "https://www.canadiantire.ca/en/search-results.html";
