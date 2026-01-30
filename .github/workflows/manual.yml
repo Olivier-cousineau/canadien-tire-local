@@ -72,7 +72,7 @@ jobs:
     needs: prepare
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 15
       matrix: ${{ fromJson(needs.prepare.outputs.stores_matrix) }}
     steps:
       - name: Checkout repository
