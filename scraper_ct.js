@@ -1456,7 +1456,7 @@ async function scrapeStore(store) {
   const city = normalizedStore.storeName || null;
   const cliStoreName = args.storeName ? String(args.storeName) : "";
   const storeName = cliStoreName || normalizedStore.storeName || "";
-  const STORE_TIMEOUT_MS = 25 * 60 * 1000;
+  const STORE_TIMEOUT_MS = 45 * 60 * 1000;
   if (hasReachedTimeLimit()) {
     console.log(
       `[SCRAPER] Limite atteinte avant le magasin ${storeId ?? "?"}. Arrêt du lancement de ce magasin.`
