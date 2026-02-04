@@ -19,6 +19,11 @@ import {
   makeCtProductKey,
   normalizeCtProductNumber,
 } from "./lib/ctProductKey.js";
+import {
+  extractModelDataFromPage,
+  normalizeCode,
+} from "./lib/ctModelNumber.js";
+import pLimit from "p-limit";
 
 const buildCtKeysFromAvailability = (availabilityText) =>
   buildCtKeysFromText(availabilityText);
@@ -77,7 +82,7 @@ function safeLoadStores() {
 const args = minimist(process.argv.slice(2), {
   string: ["storeId", "storeName", "outBase", "maxPages", "concurrency", "storesFile"],
   boolean: ["debug", "headful", "downloadImages"],
-  default: { maxPages: "120", concurrency: "15" },
+  default: { maxPages: "120", concurrency: "25" },
 });
 
 const storeIdCLI = args.storeId != null ? String(args.storeId) : "";
@@ -151,6 +156,9 @@ const rawTotalShards = process.env.TOTAL_SHARDS;
 const shardIndex = rawShardIndex ? parseInt(rawShardIndex, 10) : 0;
 const totalShards = rawTotalShards ? parseInt(rawTotalShards, 10) : 0;
 let stopRequested = false;
+let globalModelCount = 0;
+let globalUpcCount = 0;
+let globalBrandCount = 0;
 
 if (!storesFileCLI) {
   if (
@@ -184,7 +192,7 @@ if (!storesFileCLI) {
 const parsedConcurrency = Number.parseInt(String(args.concurrency), 10);
 const CONCURRENCY = Number.isFinite(parsedConcurrency) && parsedConcurrency > 0
   ? parsedConcurrency
-  : 15;
+  : 25;
 
 const storeFilter = !storesFileCLI ? (args.store || args.storeId || null) : null;
 if (storeFilter) {
@@ -878,6 +886,10 @@ function createRecordFromCard(card, pageIsClearance, storeContext = { storeId: n
     stockQty: availabilityInfo.stockQty,
     badges,
     discount_percent,
+    model_number: null,
+    model_number_norm: null,
+    brand: null,
+    upc: null,
   };
 
   if (INCLUDE_LIQUIDATION_PRICE) {
@@ -922,6 +934,39 @@ async function lazyWarmup(page) {
     ),
     page.waitForTimeout(650),
   ]).catch(()=>{});
+}
+
+async function enrichRecordsWithModelData(context, records, {
+  concurrency = 4,
+} = {}) {
+  if (!records.length) return records;
+
+  const limit = pLimit(concurrency);
+  await Promise.all(
+    records.map((record) => limit(async () => {
+      const url = record.url || record.link;
+      if (!url) return;
+      const page = await context.newPage();
+      page.setDefaultNavigationTimeout(0);
+      try {
+        await page.goto(url, { timeout: 120000, waitUntil: "domcontentloaded" });
+        await dismissMedalliaPopup(page);
+        const modelData = await extractModelDataFromPage(page);
+        if (modelData?.model_number) {
+          record.model_number = modelData.model_number;
+          record.model_number_norm = modelData.model_number_norm || normalizeCode(modelData.model_number);
+        }
+        if (modelData?.brand) record.brand = modelData.brand;
+        if (modelData?.upc) record.upc = modelData.upc;
+      } catch (error) {
+        console.warn(`[MODEL] Erreur sur ${url}:`, error?.message || error);
+      } finally {
+        await page.close().catch(() => {});
+      }
+    }))
+  );
+
+  return records;
 }
 
 async function maybeCloseStoreModal(page) {
@@ -1551,7 +1596,25 @@ async function scrapeStore(store) {
         `[SCRAPER] Fin du scraping pour le magasin ${storeId ?? "?"} – ${allDeals.length} deal(s) total.`
       );
 
-      const results = allDeals.map((out) => ({ ...out, image_url: out.image_url ?? out.image ?? null }));
+      const modelConcurrency = Number(args.modelConcurrency) || 4;
+      await enrichRecordsWithModelData(context, allDeals, {
+        concurrency: Math.max(1, modelConcurrency),
+      });
+
+      const results = allDeals.map((out) => ({
+        ...out,
+        image_url: out.image_url ?? out.image ?? null,
+      }));
+
+      const modelCount = results.filter((item) => item.model_number).length;
+      const upcCount = results.filter((item) => item.upc).length;
+      const brandCount = results.filter((item) => item.brand).length;
+      console.log("model_number_found:", modelCount);
+      console.log("upc_found:", upcCount);
+      console.log("brand_found:", brandCount);
+      globalModelCount += modelCount;
+      globalUpcCount += upcCount;
+      globalBrandCount += brandCount;
 
       await fsExtra.remove(OUT_JSON);
       await fsExtra.remove(OUT_CSV);
@@ -1595,6 +1658,10 @@ async function scrapeStore(store) {
           { id: "product_key", title: "product_key" },
           { id: "sku", title: "sku" },
           { id: "sku_formatted", title: "sku_formatted" },
+          { id: "model_number", title: "model_number" },
+          { id: "model_number_norm", title: "model_number_norm" },
+          { id: "brand", title: "brand" },
+          { id: "upc", title: "upc" },
           { id: "availability", title: "availability" },
           { id: "availability_text", title: "availability_text" },
           { id: "stockQty", title: "stockQty" },
@@ -1669,6 +1736,9 @@ async function run() {
     );
   }
 
+  console.log("model_number_found:", globalModelCount);
+  console.log("upc_found:", globalUpcCount);
+  console.log("brand_found:", globalBrandCount);
   console.log("[SCRAPER] Shard done - exiting.");
 }
 
