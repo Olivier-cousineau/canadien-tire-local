@@ -157,6 +157,7 @@ const shardIndex = rawShardIndex ? parseInt(rawShardIndex, 10) : 0;
 const totalShards = rawTotalShards ? parseInt(rawTotalShards, 10) : 0;
 let stopRequested = false;
 let globalModelCount = 0;
+let globalPartCount = 0;
 let globalUpcCount = 0;
 let globalBrandCount = 0;
 
@@ -888,6 +889,8 @@ function createRecordFromCard(card, pageIsClearance, storeContext = { storeId: n
     discount_percent,
     model_number: null,
     model_number_norm: null,
+    part_number: null,
+    part_number_norm: null,
     brand: null,
     upc: null,
   };
@@ -941,23 +944,54 @@ async function enrichRecordsWithModelData(context, records, {
 } = {}) {
   if (!records.length) return records;
 
+  const cache = new Map();
   const limit = pLimit(concurrency);
   await Promise.all(
     records.map((record) => limit(async () => {
       const url = record.url || record.link;
       if (!url) return;
+      const cacheKey = normalizeProductUrlForDedup(url) || url;
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        record.model_number = cached.model_number;
+        record.model_number_norm = cached.model_number_norm;
+        record.part_number = cached.part_number;
+        record.part_number_norm = cached.part_number_norm;
+        record.brand = cached.brand;
+        record.upc = cached.upc;
+        return;
+      }
       const page = await context.newPage();
-      page.setDefaultNavigationTimeout(0);
+      page.setDefaultNavigationTimeout(10000);
+      page.setDefaultTimeout(10000);
       try {
-        await page.goto(url, { timeout: 120000, waitUntil: "domcontentloaded" });
+        await page.goto(url, { timeout: 10000, waitUntil: "domcontentloaded" });
+        await page.waitForLoadState("networkidle", { timeout: 4000 }).catch(() => {});
         await dismissMedalliaPopup(page);
+        for (let i = 0; i < 6; i += 1) {
+          await page.mouse.wheel(0, 1200);
+          await page.waitForTimeout(300);
+        }
         const modelData = await extractModelDataFromPage(page);
         if (modelData?.model_number) {
           record.model_number = modelData.model_number;
           record.model_number_norm = modelData.model_number_norm || normalizeCode(modelData.model_number);
         }
+        if (modelData?.part_number) {
+          record.part_number = modelData.part_number;
+          record.part_number_norm =
+            modelData.part_number_norm || normalizeCode(modelData.part_number);
+        }
         if (modelData?.brand) record.brand = modelData.brand;
         if (modelData?.upc) record.upc = modelData.upc;
+        cache.set(cacheKey, {
+          model_number: record.model_number ?? null,
+          model_number_norm: record.model_number_norm ?? null,
+          part_number: record.part_number ?? null,
+          part_number_norm: record.part_number_norm ?? null,
+          brand: record.brand ?? null,
+          upc: record.upc ?? null,
+        });
       } catch (error) {
         console.warn(`[MODEL] Erreur sur ${url}:`, error?.message || error);
       } finally {
@@ -1607,12 +1641,15 @@ async function scrapeStore(store) {
       }));
 
       const modelCount = results.filter((item) => item.model_number).length;
+      const partCount = results.filter((item) => item.part_number).length;
       const upcCount = results.filter((item) => item.upc).length;
       const brandCount = results.filter((item) => item.brand).length;
       console.log("model_number_found:", modelCount);
+      console.log("part_number_found:", partCount);
       console.log("upc_found:", upcCount);
       console.log("brand_found:", brandCount);
       globalModelCount += modelCount;
+      globalPartCount += partCount;
       globalUpcCount += upcCount;
       globalBrandCount += brandCount;
 
@@ -1660,6 +1697,8 @@ async function scrapeStore(store) {
           { id: "sku_formatted", title: "sku_formatted" },
           { id: "model_number", title: "model_number" },
           { id: "model_number_norm", title: "model_number_norm" },
+          { id: "part_number", title: "part_number" },
+          { id: "part_number_norm", title: "part_number_norm" },
           { id: "brand", title: "brand" },
           { id: "upc", title: "upc" },
           { id: "availability", title: "availability" },
@@ -1737,6 +1776,7 @@ async function run() {
   }
 
   console.log("model_number_found:", globalModelCount);
+  console.log("part_number_found:", globalPartCount);
   console.log("upc_found:", globalUpcCount);
   console.log("brand_found:", globalBrandCount);
   console.log("[SCRAPER] Shard done - exiting.");
